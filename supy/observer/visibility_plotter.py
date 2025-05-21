@@ -1,6 +1,5 @@
 import os
 import tempfile
-import shutil
 import time
 from datetime import datetime, timedelta
 from .mainobserver import mainObserver

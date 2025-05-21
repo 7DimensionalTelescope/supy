@@ -1,6 +1,6 @@
 
 #%%
-from astropy.coordinates import EarthLocation, get_sun, get_moon
+from astropy.coordinates import EarthLocation, get_sun
 from datetime import datetime
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
@@ -428,7 +428,7 @@ class mainObserver:
             utctimes = Time.now()
         if not isinstance(utctimes, Time):
             utctimes = Time(utctimes)
-        return get_moon(utctimes)
+        return get_body("moon", utctimes)
     
     def moon_altaz(self,
                    utctimes : Optional[Union[datetime, Time, np.array]] = None):
