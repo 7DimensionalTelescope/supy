@@ -162,7 +162,7 @@ class Staralt():
         
         self.tonight = obsnight
 
-    def _get_skycoord(self, ra: Union[float, str], dec: Union[float, str]) -> SkyCoord:
+    def _get_skycoord(self, ra: Union[str, float], dec: Union[str, float]) -> SkyCoord:
         """
         Convert RA and Dec to SkyCoord object.
         
@@ -183,18 +183,49 @@ class Staralt():
         Raises
         ------
         ValueError
-            If RA and Dec formats are not supported.
+            If RA and Dec formats are not supported or coordinates are out of bounds.
         """
-        # Check if RA and Dec are given as strings (like "10:20:30")
-        if isinstance(ra, str) and isinstance(dec, str):
-            # Interpret as sexagesimal format (e.g., "10:20:30", "+20:30:40")
-            coord = SkyCoord(ra, dec, unit=(u.hourangle, u.deg)) # type: ignore
-        elif isinstance(ra, (float, int)) and isinstance(dec, (float, int)):
-            # Interpret as decimal degrees
-            coord = SkyCoord(ra * u.deg, dec * u.deg) # type: ignore
-        else:
-            raise ValueError("Unsupported RA and Dec format")
-        return coord
+        try:
+            # Check if RA and Dec are given as strings (sexagesimal format)
+            if isinstance(ra, str) and isinstance(dec, str):
+                # Interpret as sexagesimal format (e.g., "10:20:30", "+20:30:40")
+                coord = SkyCoord(ra, dec, unit=(u.hourangle, u.deg))
+            elif isinstance(ra, (float, int)) and isinstance(dec, (float, int)):
+                # Convert to float for validation
+                ra_deg = float(ra)
+                dec_deg = float(dec)
+                
+                # Validate coordinate ranges BEFORE creating SkyCoord
+                # RA validation: normalize to 0-360 range
+                if ra_deg < 0:
+                    ra_deg = ra_deg % 360  # Convert negative RA to positive equivalent
+                elif ra_deg > 360:
+                    ra_deg = ra_deg % 360  # Wrap RA > 360 to 0-360 range
+                
+                # DEC validation: must be within -90 to +90
+                if not (-90.0 <= dec_deg <= 90.0):
+                    raise ValueError(
+                        f"Declination must be within -90° to +90°, got {dec_deg:.2f}°. "
+                        f"Invalid coordinates: RA={ra_deg:.2f}°, DEC={dec_deg:.2f}°"
+                    )
+                
+                # Create SkyCoord with validated coordinates
+                coord = SkyCoord(ra_deg * u.deg, dec_deg * u.deg)
+                
+            else:
+                raise ValueError(
+                    f"Unsupported RA and Dec format. "
+                    f"Expected (float, float) or (str, str), got ({type(ra).__name__}, {type(dec).__name__})"
+                )
+            
+            return coord
+            
+        except ValueError as e:
+            # Re-raise ValueError with more context
+            raise ValueError(f"Invalid coordinates: {str(e)}")
+        except Exception as e:
+            # Handle other potential errors (e.g., malformed sexagesimal strings)
+            raise ValueError(f"Error creating sky coordinates: {str(e)}")
 
     def set_target(self, 
                      ra: Union[float, str], 

@@ -440,7 +440,7 @@ class VisibilityPlotter:
                 )
                 
                 # Re-analyze visibility with tomorrow's data
-                tomorrow_visibility_info = self._analyze_visibility(self.staralt.staralt)
+                tomorrow_visibility_info = self._analyze_visibility(self.staralt.data_dict)
                 
                 # Add showing_tomorrow flag to tomorrow's data
                 visibility_info["showing_tomorrow"] = True
