@@ -286,7 +286,7 @@ class VisibilityPlotter:
         )
         
         visibility_info = self._analyze_visibility_status(self.staralt.data_dict)
-        return visibility_info, self.staralt.data_dict
+        return visibility_info, self.staralt.data
 
     def _generate_tomorrow_visibility(self, ra: float, dec: float, grb_name: str, minalt: float, minmoonsep: float) -> Tuple[Dict[str, Any], Any]:
         """Generate visibility data for tomorrow night"""
@@ -303,7 +303,7 @@ class VisibilityPlotter:
         )
         
         tomorrow_visibility = self._analyze_visibility_status(self.staralt.data_dict)
-        return tomorrow_visibility, self.staralt.data_dict
+        return tomorrow_visibility, self.staralt.data
 
     def create_visibility_plot(self, ra, dec, grb_name=None, test_mode=False, minalt=30, minmoonsep=30, savefig=True):
         """
@@ -343,8 +343,7 @@ class VisibilityPlotter:
                 self.logger.info("Generating tomorrow's visibility plot")
                 tomorrow_visibility, tomorrow_data = self._generate_tomorrow_visibility(ra, dec, grb_name or "Target", minalt, minmoonsep)
                 
-                # Use tomorrow's data for plotting but keep today's status info
-                plot_data = tomorrow_data
+                # The staralt object now has tomorrow's data loaded
                 final_visibility = today_visibility.copy()
                 
                 # Copy useful info from tomorrow's analysis
@@ -359,8 +358,7 @@ class VisibilityPlotter:
                 show_current_time = False  # No current time marker for tomorrow
                 
             else:
-                # Case 1 & 2: Use today's data
-                plot_data = today_data
+                # Case 1 & 2: Use today's data (already loaded in staralt object)
                 final_visibility = today_visibility
                 show_current_time = (status == "observable_now")  # Only show current time if observable now
             
@@ -374,9 +372,9 @@ class VisibilityPlotter:
                 temp_fd, temp_path = tempfile.mkstemp(suffix='.png')
                 os.close(temp_fd)
             
-            # Step 4: Create the plot
+            # Step 4: Create the plot (staralt object has the correct data loaded)
             plt.figure(dpi=300, figsize=(10, 4))
-            self.staralt.plot_staralt(data=plot_data, show_current_time=show_current_time)
+            self.staralt.plot_staralt(show_current_time=show_current_time)
             
             # Step 5: Add tomorrow warning label if needed
             if final_visibility.get("showing_tomorrow"):
