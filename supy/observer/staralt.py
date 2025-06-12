@@ -260,23 +260,35 @@ class Staralt():
         dict
             A dictionary containing all data required for plotting.
         """
-        # Cache the current time to avoid multiple calls
         
+        # Set the reference time
         if utctime is None:
-            utctime = self.observer.now()
+            utctime = Time.now()
         elif not isinstance(utctime, Time):
             utctime = Time(utctime)
-
-        if time_shift is not None:
-            utctime += timedelta(days=time_shift)  # Move to the next day
-            self._set_night(utctime)  # Update observation night
         
-        tonight = self.tonight
+        self.logger.debug(f"Calculating visibility for time: {utctime.datetime}")
         
-        # Make sure critical attributes are not None
-        if (tonight.sunset_astro is None or tonight.sunrise_astro is None or 
-            tonight.sunset_night is None or tonight.sunrise_night is None):
-            raise ValueError("Night times not properly set - critical values are None")
+        # Clear any cached tonight data to ensure fresh calculation
+        if hasattr(self, '_cached_tonight_date'):
+            delattr(self, '_cached_tonight_date')
+        
+        # Calculate tonight for the specific date
+        tonight = self.obs.tonight(time=utctime, horizon=-18*u.deg)
+        
+        # Validate that tonight calculation matches the input date
+        expected_date = utctime.datetime.date()
+        sunset_date = getattr(tonight, 'sunset_night', None)
+        
+        if sunset_date:
+            sunset_date_only = sunset_date.datetime.date() if hasattr(sunset_date, 'datetime') else sunset_date.date()
+            if sunset_date_only != expected_date:
+                self.logger.warning(f"Night calculation mismatch: expected {expected_date}, got sunset on {sunset_date_only}")
+                # Force recalculation with explicit date
+                tonight = self.obs.tonight(time=utctime, horizon=-18*u.deg)
+        
+        self.logger.debug(f"Calculated tonight - Sunset: {getattr(tonight, 'sunset_night', None)}, "
+                        f"Sunrise: {getattr(tonight, 'sunrise_night', None)}")
 
         # Get the sky coordinates of the target
         self._objname = objname
@@ -627,7 +639,7 @@ class Staralt():
         
         # 5. Create the information text
         time_info = []
-        if now_datetime:
+        if now_datetime and show_current_time:
             time_info.append(f'Current Time: {now_datetime.strftime("%Y-%m-%d %H:%M:%S")} UTC')
         
         if obs_start_time is not None and obs_end_time is not None:

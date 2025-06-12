@@ -173,37 +173,102 @@ class VisibilityPlotter:
             min_moon_sep = staralt_data_dict.get("target_minmoonsep", 30)
             tonight = staralt_data_dict.get("tonight", {})
             
-            self.logger.debug(f"Analysis parameters - MinAlt: {min_altitude}°, MinMoonSep: {min_moon_sep}°")
-            self.logger.debug(f"Data points available: {len(color_target)} time points")
+            # Extract sunset/sunrise for debugging
+            sunset_night = tonight.get("sunset_night")
+            sunrise_night = tonight.get("sunrise_night")
+            
+            # ENHANCED DEBUGGING
+            self.logger.debug(f"=== VISIBILITY ANALYSIS DEBUG ===")
+            self.logger.debug(f"Current time: {now_datetime}")
+            self.logger.debug(f"Current date: {now_datetime.date() if now_datetime else 'None'}")
+            self.logger.debug(f"Tonight's sunset: {sunset_night}")
+            self.logger.debug(f"Tonight's sunrise: {sunrise_night}")
+            
+            if sunset_night and now_datetime:
+                # Handle both datetime objects and astropy Time objects
+                if hasattr(sunset_night, 'datetime'):
+                    sunset_date = sunset_night.datetime.date()
+                elif hasattr(sunset_night, 'date'):
+                    sunset_date = sunset_night.date()
+                else:
+                    sunset_date = sunset_night
+                    
+                current_date = now_datetime.date()
+                date_diff = (current_date - sunset_date).days
+                self.logger.debug(f"Date difference (current - sunset): {date_diff} days")
+                
+                if date_diff > 1:
+                    self.logger.error(f"CRITICAL: Using outdated night window! Current: {current_date}, Sunset: {sunset_date}")
+                elif date_diff < 0:
+                    self.logger.warning(f"WARNING: Sunset date is in the future! Current: {current_date}, Sunset: {sunset_date}")
+            
+            # Additional validation
+            if sunset_night and sunrise_night:
+                # Check if we're using a reasonable night window
+                if hasattr(sunset_night, 'datetime') and hasattr(sunrise_night, 'datetime'):
+                    night_duration = (sunrise_night.datetime - sunset_night.datetime).total_seconds() / 3600
+                    self.logger.debug(f"Night duration: {night_duration:.1f} hours")
+                    
+                    if night_duration < 8 or night_duration > 16:
+                        self.logger.warning(f"Unusual night duration: {night_duration:.1f} hours")
             
             # Validate required data
-            if not all([now_datetime, color_target, target_times, target_alts, target_moonsep]):
-                self.logger.error("Insufficient data for visibility analysis")
-                result["reason"] = "Insufficient data for visibility analysis"
+            if not target_times or not target_alts or not target_moonsep:
+                result["reason"] = "Missing target data"
+                self.logger.error("Missing required target data for analysis")
                 return result
             
-            # Convert target_times to datetime objects
+            if not now_datetime:
+                result["reason"] = "Missing current time"
+                self.logger.error("Current time not available for analysis")
+                return result
+            
+            # Convert target times to datetime objects for comparison
             target_times_dt = []
             for time_str in target_times:
-                if isinstance(time_str, str):
-                    target_times_dt.append(datetime.fromisoformat(time_str))
-                else:
-                    target_times_dt.append(time_str)
+                try:
+                    if isinstance(time_str, str):
+                        dt = datetime.fromisoformat(time_str)
+                    else:
+                        dt = time_str
+                    target_times_dt.append(dt)
+                except (ValueError, TypeError) as e:
+                    self.logger.error(f"Error converting time {time_str}: {e}")
+                    continue
             
-            # Find current position in time array
-            now_idx = min(range(len(target_times_dt)), 
-                          key=lambda i: abs((target_times_dt[i] - now_datetime).total_seconds()))
+            if not target_times_dt:
+                result["reason"] = "No valid target times"
+                self.logger.error("No valid target times for analysis")
+                return result
             
-            # Get current conditions
-            result["current_altitude"] = target_alts[now_idx]
-            result["current_moon_separation"] = target_moonsep[now_idx]
+            # Find current time index
+            now_idx = None
+            for i, dt in enumerate(target_times_dt):
+                if dt >= now_datetime:
+                    now_idx = i
+                    break
             
-            self.logger.info(f"Current conditions - Alt: {result['current_altitude']:.1f}°, "
-                           f"Moon sep: {result['current_moon_separation']:.1f}°")
+            if now_idx is None:
+                now_idx = len(target_times_dt) - 1
             
-            # Find observable periods (green points)
-            observable_indices = [i for i, color in enumerate(color_target) if color == 'g']
+            # Find observable periods (both altitude and moon separation criteria)
+            observable_indices = []
+            for i, (alt, moon_sep) in enumerate(zip(target_alts, target_moonsep)):
+                if alt >= min_altitude and moon_sep >= min_moon_sep:
+                    observable_indices.append(i)
+            
+            # Log current conditions
+            if now_idx < len(target_alts) and now_idx < len(target_moonsep):
+                current_alt = target_alts[now_idx]
+                current_moon = target_moonsep[now_idx]
+                result["current_altitude"] = current_alt
+                result["current_moon_separation"] = current_moon
+                self.logger.info(f"Current conditions - Alt: {current_alt:.1f}°, Moon sep: {current_moon:.1f}°")
+            
             self.logger.info(f"Found {len(observable_indices)} observable time points")
+            self.logger.debug(f"Observable indices: {observable_indices}")
+            self.logger.debug(f"Current time index: {now_idx}")
+            self.logger.debug(f"=== END DEBUG ===")
             
             # Case 1: Currently observable
             if observable_indices and now_idx in observable_indices:
@@ -214,12 +279,12 @@ class VisibilityPlotter:
             elif observable_indices and any(i > now_idx for i in observable_indices):
                 self.logger.info("Case 2: Observable later tonight")
                 return self._handle_observable_later(result, observable_indices, target_times_dt, now_datetime, now_idx)
-            
+                
             # Case 3 & 4: Not observable tonight - check if tomorrow is possible
             else:
                 self.logger.info("Case 3/4: Not observable tonight - checking tomorrow possibility")
                 return self._handle_not_observable_tonight(result, target_alts, target_moonsep, min_altitude, min_moon_sep, tonight, now_datetime)
-                
+                    
         except Exception as e:
             self.logger.error(f"Error analyzing visibility: {e}", exc_info=True)
             result["reason"] = f"Error in visibility analysis: {str(e)}"
@@ -374,22 +439,43 @@ class VisibilityPlotter:
         
         return result
 
-    def _generate_today_visibility(self, ra: float, dec: float, grb_name: str, minalt: float, minmoonsep: float) -> Tuple[Dict[str, Any], Any]:
-        """Generate visibility data for today/tonight"""
+    def _generate_today_visibility(self, ra, dec, grb_name, minalt, minmoonsep) -> Tuple[Dict[str, Any], Any]:
+        """Generate visibility data for today"""
         self.logger.info(f"Generating today's visibility for {grb_name} at RA={ra:.2f}, DEC={dec:.2f}")
         
         try:
+            # Use current time for today's analysis
+            current_time = datetime.now()
+            self.logger.debug(f"Using current time for today's analysis: {current_time}")
+            
             self.staralt.set_target(
                 ra=ra,
                 dec=dec,
                 objname=grb_name,
+                utctime=current_time,  # Ensure we use current time
                 target_minalt=minalt,
                 target_minmoonsep=minmoonsep
             )
             
-            visibility_info = self._analyze_visibility_status(self.staralt.data_dict)
-            self.logger.info(f"Today's visibility analysis complete - Status: {visibility_info.get('status')}")
-            return visibility_info, self.staralt.data
+            # VALIDATION: Check that calculated night times are reasonable
+            data_dict = self.staralt.data_dict
+            tonight = data_dict.get("tonight", {})
+            sunset_night = tonight.get("sunset_night")
+            sunrise_night = tonight.get("sunrise_night")
+            
+            if sunset_night and sunrise_night:
+                current_date = current_time.date()
+                sunset_date = sunset_night.date() if hasattr(sunset_night, 'date') else sunset_night
+                
+                # Sunset should be today or yesterday (for early morning observations)
+                date_diff = (current_date - sunset_date).days
+                if date_diff > 1:
+                    self.logger.error(f"Invalid night calculation: sunset {sunset_date} too old for current date {current_date}")
+                    raise ValueError(f"Night time calculation error: sunset date mismatch")
+            
+            today_visibility = self._analyze_visibility_status(self.staralt.data_dict)
+            self.logger.info(f"Today's visibility analysis complete - Status: {today_visibility.get('status')}")
+            return today_visibility, self.staralt.data
             
         except Exception as e:
             self.logger.error(f"Error generating today's visibility: {e}")
