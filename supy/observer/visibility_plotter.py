@@ -71,7 +71,7 @@ class VisibilityPlotter:
             log_filename: Name of the log file to use for standalone operation
         """
         self.observer = mainObserver()  # Use default parameters
-        self.staralt = Staralt(self.observer)
+        self.staralt = Staralt(self.observer, logger=self.logger)
         
         # Use provided logger or create our own that shares the same log file
         if logger is not None:

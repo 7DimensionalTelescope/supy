@@ -9,7 +9,7 @@ from typing import Union, Dict, Any, Optional, Tuple
 
 from matplotlib.dates import date2num, DateFormatter
 from datetime import datetime
-
+import logging
 from .mainobserver import mainObserver
 from .params import obsNightParams, staraltParams
 from . import bumper
@@ -18,8 +18,9 @@ class Staralt():
     """Class to handle star altitude plots."""
     
     def __init__(self, 
-                 observer: Optional[mainObserver] = None,
-                 utctime: Optional[Union[dt, Time]] = None):
+                observer: Optional[mainObserver] = None,
+                utctime: Optional[Union[dt, Time]] = None,
+                logger: Optional[logging.Logger] = None):
         """
         Initialize a Staralt object.
         
@@ -29,14 +30,31 @@ class Staralt():
             Observer object with location information.
         utctime : datetime or Time, optional
             Initial time for calculations. Default is current time.
+        logger : logging.Logger, optional
+            Logger instance for debugging. If None, creates a basic logger.
         """
-        # Set the observer
+        # Initialize logger first - CRITICAL FIX
+        if logger is not None:
+            self.logger = logger
+            self.logger.debug("Staralt initialized with external logger")
+        else:
+            # Create a basic logger if none provided
+            self.logger = logging.getLogger(f"{__name__}.Staralt")
+            if not self.logger.handlers:
+                handler = logging.StreamHandler()
+                formatter = logging.Formatter('%(asctime)s - %(levelname)s - [Staralt] - %(message)s')
+                handler.setFormatter(formatter)
+                self.logger.addHandler(handler)
+                self.logger.setLevel(logging.WARNING)  # Set to WARNING to avoid spam
+                self.logger.propagate = False
+            self.logger.debug("Staralt initialized with default logger")
+        
+        # Rest of the original __init__ code...
         if observer is None:
             observer = mainObserver()
-
+        
         self._observer = observer
         
-        # If no time is provided, use the current time
         if utctime is None:
             utctime = self._observer.now()
         if not isinstance(utctime, Time):
