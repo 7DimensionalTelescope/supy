@@ -70,9 +70,6 @@ class VisibilityPlotter:
             logger: Logger instance from main application (gcn_bot.py)
             log_filename: Name of the log file to use for standalone operation
         """
-        self.observer = mainObserver()  # Use default parameters
-        self.staralt = Staralt(self.observer, logger=self.logger)
-        
         # Use provided logger or create our own that shares the same log file
         if logger is not None:
             self.logger = logger
@@ -80,7 +77,11 @@ class VisibilityPlotter:
         else:
             self.logger = setup_visibility_logger(log_filename)
             self.logger.info("VisibilityPlotter initialized with standalone logger")
-        
+
+        # Initialize observer and staralt
+        self.observer = mainObserver()  # Use default parameters
+        self.staralt = Staralt(self.observer, logger=self.logger)
+
         # Define timezones
         self.chile_tz = pytz.timezone("America/Santiago")
         self.korea_tz = pytz.timezone("Asia/Seoul")
