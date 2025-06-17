@@ -81,6 +81,10 @@ class Staralt():
     
     @property
     def target_altaz(self) -> AltAz:
+        if not hasattr(self, '_target_coord') or self._target_coord is None:
+            raise ValueError("Target coordinates not set. Call set_target() first.")
+        if not hasattr(self.observer, '_earthlocation'):
+            raise AttributeError("Observer location not properly initialized.")
         return self._target_coord.transform_to(AltAz(obstime=self.utctime, location=self.observer._earthlocation))
 
     @property
@@ -292,7 +296,7 @@ class Staralt():
             delattr(self, '_cached_tonight_date')
         
         # Calculate tonight for the specific date
-        tonight = self.obs.tonight(time=utctime, horizon=-18*u.deg)
+        tonight = self.observer.tonight(time=utctime, horizon=-18*u.deg)
         
         # Validate that tonight calculation matches the input date
         expected_date = utctime.datetime.date()
@@ -303,7 +307,7 @@ class Staralt():
             if sunset_date_only != expected_date:
                 self.logger.warning(f"Night calculation mismatch: expected {expected_date}, got sunset on {sunset_date_only}")
                 # Force recalculation with explicit date
-                tonight = self.obs.tonight(time=utctime, horizon=-18*u.deg)
+                tonight = self.observer.tonight(time=utctime, horizon=-18*u.deg)
         
         self.logger.debug(f"Calculated tonight - Sunset: {getattr(tonight, 'sunset_night', None)}, "
                         f"Sunrise: {getattr(tonight, 'sunrise_night', None)}")

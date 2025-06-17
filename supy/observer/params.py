@@ -17,8 +17,13 @@ class obsNightParams:
         self.sunrise_night: Optional[Time] = None
         self.sunset_night: Optional[Time] = None
 
-    def __getattr__(self, name: str) -> None:
-        return None
+    def __getattr__(self, name: str):
+        # Only return None for expected time attributes
+        expected_attrs = ['sunrise_civil', 'sunset_civil', 'sunrise_nautical', 'sunset_nautical', 
+                        'sunrise_astro', 'sunset_astro', 'sunrise_night', 'sunset_night']
+        if name in expected_attrs:
+            return None
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def __repr__(self) -> str:
         def format_value(value):
