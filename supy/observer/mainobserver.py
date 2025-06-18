@@ -192,8 +192,9 @@ class mainObserver:
         ==========
         1. time : datetime or Time, optional
             The UTC time at which to start the calculation of the start and end of tonight. If not provided, the current time is used.
-        2. horizon : float, optional
+        2. horizon : float or astropy.units.Quantity, optional
             The horizon angle to use when calculating the start and end of tonight. Default is -18 degrees.
+            Can be a float (interpreted as degrees) or an astropy Quantity with units.
 
         Returns
         =======
@@ -205,7 +206,16 @@ class mainObserver:
             time = Time.now()
         if not isinstance(time, Time):
             time = Time(time)
-        return self._observer.tonight(time, horizon = horizon*u.deg)
+        
+        # Check if horizon already has units
+        if hasattr(horizon, 'unit'):
+            # horizon is already a Quantity with units
+            horizon_with_units = horizon
+        else:
+            # horizon is a scalar, apply degree units
+            horizon_with_units = horizon * u.deg
+        
+        return self._observer.tonight(time, horizon=horizon_with_units)
     
 
     ############ Target ############
