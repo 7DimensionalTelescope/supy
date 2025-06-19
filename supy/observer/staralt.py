@@ -33,7 +33,7 @@ class Staralt():
         logger : logging.Logger, optional
             Logger instance for debugging. If None, creates a basic logger.
         """
-        # Initialize logger first - CRITICAL FIX
+        # Initialize logger first
         if logger is not None:
             self.logger = logger
             self.logger.debug("Staralt initialized with external logger")

@@ -7,6 +7,8 @@ from .staralt import Staralt
 import matplotlib.pyplot as plt
 import logging
 import pytz
+from astropy.time import Time
+from astropy import units as u
 from typing import Optional, Dict, Tuple, Any, List, Union
 
 def setup_visibility_logger(log_filename='gcn_bot.log'):
@@ -90,26 +92,35 @@ class VisibilityPlotter:
         self.logger.debug(f"Observer location: Lat {self.observer._latitude}, Lon {self.observer._longitude}")
         self.logger.debug(f"Timezone setup: Chile={self.chile_tz}, Korea={self.korea_tz}")
     
-    def _convert_time_to_clt_kst(self, utc_time: datetime) -> Tuple[datetime, datetime]:
+    def _convert_time_to_clt_kst(self, utc_time: Union[datetime, Time]) -> Tuple[datetime, datetime]:
         """
         Convert UTC time to Chile local time and Korean time.
         
         Args:
-            utc_time: Datetime in UTC
+            utc_time: Datetime in UTC or astropy Time object
             
         Returns:
             Tuple containing (chile_time, korea_time)
         """
         try:
+            # Handle astropy Time objects
+            if isinstance(utc_time, Time):
+                utc_datetime = utc_time.datetime
+            else:
+                utc_datetime = utc_time
+                
             # Ensure UTC time has timezone info
-            if utc_time.tzinfo is None:
-                utc_time = pytz.utc.localize(utc_time)
+            if utc_datetime.tzinfo is None:
+                utc_datetime = pytz.utc.localize(utc_datetime)
+            elif utc_datetime.tzinfo != pytz.utc:
+                # Convert to UTC if it's in a different timezone
+                utc_datetime = utc_datetime.astimezone(pytz.utc)
                 
             # Convert to Chile and Korea times
-            chile_time = utc_time.astimezone(self.chile_tz)
-            korea_time = utc_time.astimezone(self.korea_tz)
+            chile_time = utc_datetime.astimezone(self.chile_tz)
+            korea_time = utc_datetime.astimezone(self.korea_tz)
             
-            self.logger.debug(f"Time conversion - UTC: {utc_time}, CLT: {chile_time}, KST: {korea_time}")
+            self.logger.debug(f"Time conversion - UTC: {utc_datetime}, CLT: {chile_time}, KST: {korea_time}")
             return chile_time, korea_time
             
         except Exception as e:
@@ -174,6 +185,11 @@ class VisibilityPlotter:
             min_moon_sep = staralt_data_dict.get("target_minmoonsep", 30)
             tonight = staralt_data_dict.get("tonight", {})
             
+            # Ensure we're using the correct current time
+            if now_datetime is None:
+                now_datetime = Time.now().datetime
+                self.logger.warning("now_datetime was None, using current UTC time as fallback")
+                
             # Extract sunset/sunrise for debugging
             sunset_night = tonight.get("sunset_night")
             sunrise_night = tonight.get("sunrise_night")
@@ -198,8 +214,8 @@ class VisibilityPlotter:
                 date_diff = (current_date - sunset_date).days
                 self.logger.debug(f"Date difference (current - sunset): {date_diff} days")
                 
-                if date_diff > 1:
-                    self.logger.error(f"CRITICAL: Using outdated night window! Current: {current_date}, Sunset: {sunset_date}")
+                if abs(date_diff) > 1:
+                    self.logger.warning(f"Night calculation spans multiple days: current {current_date}, sunset {sunset_date}")
                 elif date_diff < 0:
                     self.logger.warning(f"WARNING: Sunset date is in the future! Current: {current_date}, Sunset: {sunset_date}")
             
@@ -446,14 +462,14 @@ class VisibilityPlotter:
         
         try:
             # Use current time for today's analysis
-            current_time = datetime.now()
-            self.logger.debug(f"Using current time for today's analysis: {current_time}")
+            current_time = Time.now()
+            self.logger.debug(f"Using current time for today's analysis: {current_time.datetime}")
             
             self.staralt.set_target(
                 ra=ra,
                 dec=dec,
                 objname=grb_name,
-                utctime=current_time,  # Ensure we use current time
+                utctime=current_time,
                 target_minalt=minalt,
                 target_minmoonsep=minmoonsep
             )
@@ -465,14 +481,15 @@ class VisibilityPlotter:
             sunrise_night = tonight.get("sunrise_night")
             
             if sunset_night and sunrise_night:
-                current_date = current_time.date()
-                sunset_date = sunset_night.date() if hasattr(sunset_night, 'date') else sunset_night
+                current_date = current_time.datetime.date()
+                sunset_date = sunset_night.datetime.date() if hasattr(sunset_night, 'datetime') else sunset_night.date()
                 
                 # Sunset should be today or yesterday (for early morning observations)
                 date_diff = (current_date - sunset_date).days
-                if date_diff > 1:
-                    self.logger.error(f"Invalid night calculation: sunset {sunset_date} too old for current date {current_date}")
-                    raise ValueError(f"Night time calculation error: sunset date mismatch")
+                if abs(date_diff) > 1:
+                    self.logger.warning(f"Night calculation spans multiple days: current {current_date}, sunset {sunset_date}")
+                else:
+                    self.logger.debug(f"Night calculation valid: date diff = {date_diff} days")
             
             today_visibility = self._analyze_visibility_status(self.staralt.data_dict)
             self.logger.info(f"Today's visibility analysis complete - Status: {today_visibility.get('status')}")
@@ -488,8 +505,8 @@ class VisibilityPlotter:
         
         try:
             # Calculate tomorrow's date (next observing night)
-            tomorrow = datetime.now() + timedelta(days=1)
-            self.logger.debug(f"Tomorrow's date: {tomorrow.strftime('%Y-%m-%d')}")
+            tomorrow = Time.now() + 1*u.day
+            self.logger.debug(f"Tomorrow's date: {tomorrow.datetime.strftime('%Y-%m-%d')}")
             
             self.staralt.set_target(
                 ra=ra,
