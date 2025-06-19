@@ -317,8 +317,8 @@ class Staralt():
         self._target_coord = self._get_skycoord(ra, dec)
 
         # Define time range for plotting using Time arithmetic
-        time_range_start = tonight.sunset_astro - 2*u.hour # type: ignore
-        time_range_end = tonight.sunrise_astro + 2*u.hour # type: ignore
+        time_range_start = self.tonight.sunset_astro - 2*u.hour # type: ignore
+        time_range_end = self.tonight.sunrise_astro + 2*u.hour # type: ignore
 
         # Optimize time axis generation - calculate time points more efficiently
         time_span_seconds = (time_range_end - time_range_start).sec
@@ -352,8 +352,8 @@ class Staralt():
             # Only process if we have valid times
             if obs_times and len(obs_times) > 0:
                 obs_times_array = np.array(obs_times)
-                is_night_time = np.logical_and(obs_times_array >= tonight.sunset_night, 
-                                            obs_times_array <= tonight.sunrise_night)
+                is_night_time = np.logical_and(obs_times_array >= self.tonight.sunset_night, 
+                                            obs_times_array <= self.tonight.sunrise_night)
                 is_above_min_alt = np.array(target_alts) > target_minalt
                 is_min_moon_sep = np.array(target_moonsep_vals) > target_minmoonsep
                 
@@ -375,10 +375,10 @@ class Staralt():
 
         # Convert night times to datetime with proper None checks
         tonight_data: Dict[str, Optional[dt]] = {
-            "sunset_night": bumper.safe_get_datetime(getattr(tonight, 'sunset_night', None)),
-            "sunrise_night": bumper.safe_get_datetime(getattr(tonight, 'sunrise_night', None)),
-            "sunset_civil": bumper.safe_get_datetime(getattr(tonight, 'sunset_civil', None)),
-            "sunrise_civil": bumper.safe_get_datetime(getattr(tonight, 'sunrise_civil', None))
+            "sunset_night": bumper.safe_get_datetime(getattr(self.tonight, 'sunset_night', None)),
+            "sunrise_night": bumper.safe_get_datetime(getattr(self.tonight, 'sunrise_night', None)),
+            "sunset_civil": bumper.safe_get_datetime(getattr(self.tonight, 'sunset_civil', None)),
+            "sunrise_civil": bumper.safe_get_datetime(getattr(self.tonight, 'sunrise_civil', None))
         }
 
         # Create the data dictionary - use the cached now value
