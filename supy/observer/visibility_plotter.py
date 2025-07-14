@@ -282,6 +282,23 @@ class VisibilityPlotter:
                 result["current_moon_separation"] = current_moon
                 self.logger.info(f"Current conditions - Alt: {current_alt:.1f}°, Moon sep: {current_moon:.1f}°")
             
+            # Check for observation limit violations (altitude < 30°)
+            observation_limit_warning = False
+            low_altitude_periods = []
+            
+            if target_alts and observable_indices:
+                for idx in observable_indices:
+                    if idx < len(target_alts) and target_alts[idx] < min_altitude:
+                        observation_limit_warning = True
+                        if idx < len(target_times_dt):
+                            low_altitude_periods.append(target_times_dt[idx])
+            
+            # Add warning to result if needed
+            if observation_limit_warning:
+                result["observation_limit_warning"] = True
+                result["warning_message"] = f"⚠️ Target drops below {min_altitude}° altitude limit during some observable periods"
+                self.logger.warning(f"Observation limit warning: target below {min_altitude}° during observable times")
+            
             self.logger.info(f"Found {len(observable_indices)} observable time points")
             self.logger.debug(f"Observable indices: {observable_indices}")
             self.logger.debug(f"Current time index: {now_idx}")
@@ -360,21 +377,35 @@ class VisibilityPlotter:
         result["observable_end"] = target_times_dt[end_idx]
         result["observable_hours"] = (result["observable_end"] - result["observable_start"]).total_seconds() / 3600
         
-        # Calculate time until observable
-        hours_until = (result["observable_start"] - now_datetime).total_seconds() / 3600
-        result["hours_until_observable"] = hours_until
+        # Calculate precise time until observable
+        time_until_observable = (result["observable_start"] - now_datetime).total_seconds() / 3600
+        result["hours_until_observable"] = max(0, time_until_observable)
         
-        self.logger.info(f"Observable in {hours_until:.1f}h for {result['observable_hours']:.1f}h")
+        # Calculate minutes for more precision when less than 1 hour
+        if result["hours_until_observable"] < 1:
+            minutes_until = (result["observable_start"] - now_datetime).total_seconds() / 60
+            result["minutes_until_observable"] = max(0, minutes_until)
+            self.logger.info(f"Observable in {minutes_until:.0f} minutes")
+        else:
+            self.logger.info(f"Observable in {time_until_observable:.1f} hours")
         
-        # Set condition based on wait time
-        if hours_until < 1:
+        # Enhanced condition setting
+        if time_until_observable < 0.5:  # Less than 30 minutes
             result["condition"] = "Observable Very Soon"
-        elif hours_until < 3:
+            result["urgency"] = "high"
+        elif time_until_observable < 1:  # Less than 1 hour
+            result["condition"] = "Observable Soon"
+            result["urgency"] = "medium"
+        elif time_until_observable < 3:  # Less than 3 hours
             result["condition"] = "Observable in a Few Hours"
+            result["urgency"] = "low"
         else:
             result["condition"] = "Long Wait for Observation"
+            result["urgency"] = "low"
         
-        result["recommendation"] = f"Schedule observations to begin at {self._format_time_clt_kst(result['observable_start'])}"
+        # Enhanced recommendation with precise timing
+        start_time_formatted = self._format_time_clt_kst(result["observable_start"])
+        result["recommendation"] = f"Schedule observations to begin at {start_time_formatted}"
         
         self.logger.info(f"Observable later - Condition: {result['condition']}")
         return result
@@ -463,38 +494,57 @@ class VisibilityPlotter:
         try:
             # Use current time for today's analysis
             current_time = Time.now()
+            current_datetime = current_time.datetime
+            current_hour = current_datetime.hour
             self.logger.debug(f"Using current time for today's analysis: {current_time.datetime}")
             
+            # Define "today's night" properly:
+            # - If current time is before noon (12:00), we're still in "last night"
+            # - If current time is after noon, we're planning for "tonight"
+            if current_hour < 12:
+                # Early morning - we're still in last night's observing session
+                # Use yesterday's date for night calculation
+                night_reference_time = current_time - 1*u.day
+                self.logger.debug(f"Early morning ({current_hour:02d}:xx) - using yesterday's night definition")
+            else:
+                # Afternoon/evening - planning for tonight's observing session
+                night_reference_time = current_time
+                self.logger.debug(f"Afternoon/evening ({current_hour:02d}:xx) - using today's night definition")
+            
+            self.logger.debug(f"Night reference time: {night_reference_time.datetime}")
+
+            # Calculate visibility for the appropriate night
             self.staralt.set_target(
                 ra=ra,
                 dec=dec,
                 objname=grb_name,
-                utctime=current_time,
+                utctime=night_reference_time,  # Use the adjusted reference time
                 target_minalt=minalt,
                 target_minmoonsep=minmoonsep
             )
             
-            # VALIDATION: Check that calculated night times are reasonable
+            # Validate night calculation
             data_dict = self.staralt.data_dict
             tonight = data_dict.get("tonight", {})
             sunset_night = tonight.get("sunset_night")
             sunrise_night = tonight.get("sunrise_night")
             
             if sunset_night and sunrise_night:
-                current_date = current_time.datetime.date()
-                sunset_date = sunset_night.datetime.date() if hasattr(sunset_night, 'datetime') else sunset_night.date()
+                self.logger.debug(f"Calculated night: {sunset_night.datetime} to {sunrise_night.datetime}")
                 
-                # Sunset should be today or yesterday (for early morning observations)
-                date_diff = (current_date - sunset_date).days
-                if abs(date_diff) > 1:
-                    self.logger.warning(f"Night calculation spans multiple days: current {current_date}, sunset {sunset_date}")
+                # Check if current time falls within the calculated night
+                if sunset_night.datetime <= current_datetime <= sunrise_night.datetime:
+                    self.logger.info("Current time is within the calculated observing night")
+                elif current_datetime < sunset_night.datetime:
+                    hours_until_night = (sunset_night.datetime - current_datetime).total_seconds() / 3600
+                    self.logger.info(f"Current time is {hours_until_night:.1f}h before tonight's observing window")
                 else:
-                    self.logger.debug(f"Night calculation valid: date diff = {date_diff} days")
+                    self.logger.info("Current time is after tonight's observing window")
             
             today_visibility = self._analyze_visibility_status(self.staralt.data_dict)
-            self.logger.info(f"Today's visibility analysis complete - Status: {today_visibility.get('status')}")
+            self.logger.info(f"Today's night visibility analysis complete - Status: {today_visibility.get('status')}")
             return today_visibility, self.staralt.data
-            
+
         except Exception as e:
             self.logger.error(f"Error generating today's visibility: {e}")
             raise
@@ -661,6 +711,12 @@ class VisibilityPlotter:
             # Add condition
             if condition != "Unknown":
                 sections.append(f"> - 🌃 *Condition*: {condition}")
+            
+            # Add observation limit warning if present
+            if visibility_info.get("observation_limit_warning", False):
+                warning_msg = visibility_info.get("warning_message", "")
+                sections.append(f"> {warning_msg}")
+                self.logger.debug("Added observation limit warning to visibility message")
             
             # Add detailed information based on status
             if status == "observable_now":
