@@ -152,16 +152,18 @@ class VisibilityPlotter:
     
     def _analyze_visibility_status(self, staralt_data_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Analyze visibility data and determine one of 4 clear statuses:
-        1. observable_now: Currently observable
-        2. observable_later: Observable later tonight  
-        3. observable_tomorrow: Not observable tonight, but will be tomorrow night
-        4. not_observable: Not observable at all
+        Analyze the visibility status based on staralt data.
+        
+        Args:
+            staralt_data_dict: Dictionary containing staralt analysis results
+            
+        Returns:
+            Dictionary with visibility status and details
         """
+        # Initialize result structure
         result = {
-            "status": "not_observable",
-            "condition": "Unknown",
-            "observable_hours": 0,
+            "status": "unknown",
+            "condition": "Analysis pending",
             "observable_start": None,
             "observable_end": None,
             "best_time": None,
@@ -202,12 +204,13 @@ class VisibilityPlotter:
             self.logger.debug(f"Tonight's sunrise: {sunrise_night}")
             
             if sunset_night and now_datetime:
-                # Handle both datetime objects and astropy Time objects
+                # Handle both datetime and astropy.Time objects correctly
                 if hasattr(sunset_night, 'datetime'):
                     sunset_date = sunset_night.datetime.date()
                 elif hasattr(sunset_night, 'date'):
                     sunset_date = sunset_night.date()
                 else:
+                    # Already a datetime object
                     sunset_date = sunset_night
                     
                 current_date = now_datetime.date()
@@ -217,13 +220,21 @@ class VisibilityPlotter:
                 if abs(date_diff) > 1:
                     self.logger.warning(f"Night calculation spans multiple days: current {current_date}, sunset {sunset_date}")
                 elif date_diff < 0:
-                    self.logger.warning(f"WARNING: Sunset date is in the future! Current: {current_date}, Sunset: {sunset_date}")
+                    self.logger.warning(f"WARNING: Sunset date is in the future!")
             
             # Additional validation
             if sunset_night and sunrise_night:
                 # Check if we're using a reasonable night window
+                # Handle both datetime and astropy.Time objects correctly
                 if hasattr(sunset_night, 'datetime') and hasattr(sunrise_night, 'datetime'):
                     night_duration = (sunrise_night.datetime - sunset_night.datetime).total_seconds() / 3600
+                    self.logger.debug(f"Night duration: {night_duration:.1f} hours")
+                    
+                    if night_duration < 8 or night_duration > 16:
+                        self.logger.warning(f"Unusual night duration: {night_duration:.1f} hours")
+                elif hasattr(sunset_night, 'total_seconds') and hasattr(sunrise_night, 'total_seconds'):
+                    # Both are already datetime objects
+                    night_duration = (sunrise_night - sunset_night).total_seconds() / 3600
                     self.logger.debug(f"Night duration: {night_duration:.1f} hours")
                     
                     if night_duration < 8 or night_duration > 16:
@@ -274,54 +285,62 @@ class VisibilityPlotter:
                 if alt >= min_altitude and moon_sep >= min_moon_sep:
                     observable_indices.append(i)
             
-            # Log current conditions
-            if now_idx < len(target_alts) and now_idx < len(target_moonsep):
-                current_alt = target_alts[now_idx]
-                current_moon = target_moonsep[now_idx]
-                result["current_altitude"] = current_alt
-                result["current_moon_separation"] = current_moon
-                self.logger.info(f"Current conditions - Alt: {current_alt:.1f}°, Moon sep: {current_moon:.1f}°")
+            # Get current conditions
+            current_alt = target_alts[now_idx] if now_idx < len(target_alts) else 0
+            current_moon_sep = target_moonsep[now_idx] if now_idx < len(target_moonsep) else 0
             
-            # Check for observation limit violations (altitude < 30°)
-            observation_limit_warning = False
-            low_altitude_periods = []
+            result["current_altitude"] = current_alt
+            result["current_moon_separation"] = current_moon_sep
             
-            if target_alts and observable_indices:
-                for idx in observable_indices:
-                    if idx < len(target_alts) and target_alts[idx] < min_altitude:
-                        observation_limit_warning = True
-                        if idx < len(target_times_dt):
-                            low_altitude_periods.append(target_times_dt[idx])
+            self.logger.debug(f"Current conditions - Alt: {current_alt:.1f}°, Moon sep: {current_moon_sep:.1f}°")
+            self.logger.debug(f"Requirements - Min alt: {min_altitude}°, Min moon sep: {min_moon_sep}°")
+            self.logger.debug(f"Observable periods: {len(observable_indices)} time points")
             
-            # Add warning to result if needed
-            if observation_limit_warning:
-                result["observation_limit_warning"] = True
-                result["warning_message"] = f"⚠️ Target drops below {min_altitude}° altitude limit during some observable periods"
-                self.logger.warning(f"Observation limit warning: target below {min_altitude}° during observable times")
+            # Analyze observability
+            if not observable_indices:
+                # Case 3 or 4: Not observable tonight
+                return self._handle_not_observable_tonight(result, target_alts, target_moonsep, 
+                                                        min_altitude, min_moon_sep, tonight, now_datetime)
             
-            self.logger.info(f"Found {len(observable_indices)} observable time points")
-            self.logger.debug(f"Observable indices: {observable_indices}")
-            self.logger.debug(f"Current time index: {now_idx}")
-            self.logger.debug(f"=== END DEBUG ===")
+            # Find observable time periods
+            observable_periods = []
+            current_period_start = None
             
-            # Case 1: Currently observable
-            if observable_indices and now_idx in observable_indices:
-                self.logger.info("Case 1: Currently observable")
-                return self._handle_observable_now(result, observable_indices, target_times_dt, now_datetime)
-            
-            # Case 2: Observable later tonight
-            elif observable_indices and any(i > now_idx for i in observable_indices):
-                self.logger.info("Case 2: Observable later tonight")
-                return self._handle_observable_later(result, observable_indices, target_times_dt, now_datetime, now_idx)
+            for i in range(len(observable_indices)):
+                idx = observable_indices[i]
                 
-            # Case 3 & 4: Not observable tonight - check if tomorrow is possible
+                # Start of a new period
+                if current_period_start is None:
+                    current_period_start = idx
+                
+                # Check if this is the end of current period
+                is_end_of_period = (i == len(observable_indices) - 1 or 
+                                observable_indices[i + 1] != idx + 1)
+                
+                if is_end_of_period:
+                    observable_periods.append((current_period_start, idx))
+                    current_period_start = None
+            
+            self.logger.debug(f"Found {len(observable_periods)} observable periods")
+            
+            # Check if currently observable
+            currently_observable = now_idx in observable_indices
+            
+            if currently_observable:
+                # Case 1: Observable now
+                return self._handle_observable_now(result, observable_periods, target_times_dt, 
+                                                target_alts, target_moonsep, now_idx)
             else:
-                self.logger.info("Case 3/4: Not observable tonight - checking tomorrow possibility")
-                return self._handle_not_observable_tonight(result, target_alts, target_moonsep, min_altitude, min_moon_sep, tonight, now_datetime)
-                    
+                # Case 2: Observable later tonight
+                return self._handle_observable_later(result, observable_periods, target_times_dt, 
+                                                    target_alts, target_moonsep, now_idx, now_datetime)
+        
         except Exception as e:
-            self.logger.error(f"Error analyzing visibility: {e}", exc_info=True)
-            result["reason"] = f"Error in visibility analysis: {str(e)}"
+            self.logger.error(f"Error in visibility analysis: {e}", exc_info=True)
+            result["status"] = "error"
+            result["condition"] = f"Analysis failed: {str(e)}"
+            result["message"] = "Could not analyze visibility"
+            result["recommendation"] = "Manual observation planning required"
             return result
     
     def _handle_observable_now(self, result: Dict[str, Any], observable_indices: List[int], 
@@ -487,18 +506,31 @@ class VisibilityPlotter:
         
         return result
 
-    def _generate_today_visibility(self, ra, dec, grb_name, minalt, minmoonsep) -> Tuple[Dict[str, Any], Any]:
-        """Generate visibility data for today"""
-        self.logger.info(f"Generating today's visibility for {grb_name} at RA={ra:.2f}, DEC={dec:.2f}")
+    def _generate_today_visibility(self, ra: float, dec: float, grb_name: str, 
+                                minalt: float, minmoonsep: float) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Generate today's visibility analysis for the target.
         
+        Args:
+            ra: Right Ascension in degrees
+            dec: Declination in degrees  
+            grb_name: Name of the GRB
+            minalt: Minimum altitude in degrees
+            minmoonsep: Minimum moon separation in degrees
+            
+        Returns:
+            Tuple of (visibility_dict, data_dict)
+        """
         try:
-            # Use current time for today's analysis
+            self.logger.info(f"Generating today's visibility for {grb_name} at RA={ra:.2f}, DEC={dec:.2f}")
+            
+            # Get current time
             current_time = Time.now()
             current_datetime = current_time.datetime
             current_hour = current_datetime.hour
-            self.logger.debug(f"Using current time for today's analysis: {current_time.datetime}")
             
-            # Define "today's night" properly:
+            # Determine appropriate night reference time
+            # Logic: 
             # - If current time is before noon (12:00), we're still in "last night"
             # - If current time is after noon, we're planning for "tonight"
             if current_hour < 12:
@@ -530,24 +562,40 @@ class VisibilityPlotter:
             sunrise_night = tonight.get("sunrise_night")
             
             if sunset_night and sunrise_night:
-                self.logger.debug(f"Calculated night: {sunset_night.datetime} to {sunrise_night.datetime}")
+                # Handle both datetime and astropy.Time objects correctly
+                if hasattr(sunset_night, 'datetime'):
+                    sunset_dt = sunset_night.datetime
+                    sunrise_dt = sunrise_night.datetime
+                else:
+                    # Already datetime objects
+                    sunset_dt = sunset_night
+                    sunrise_dt = sunrise_night
+                
+                self.logger.debug(f"Calculated night: {sunset_dt} to {sunrise_dt}")
                 
                 # Check if current time falls within the calculated night
-                if sunset_night.datetime <= current_datetime <= sunrise_night.datetime:
+                if sunset_dt <= current_datetime <= sunrise_dt:
                     self.logger.info("Current time is within the calculated observing night")
-                elif current_datetime < sunset_night.datetime:
-                    hours_until_night = (sunset_night.datetime - current_datetime).total_seconds() / 3600
+                elif current_datetime < sunset_dt:
+                    hours_until_night = (sunset_dt - current_datetime).total_seconds() / 3600
                     self.logger.info(f"Current time is {hours_until_night:.1f}h before tonight's observing window")
                 else:
                     self.logger.info("Current time is after tonight's observing window")
             
             today_visibility = self._analyze_visibility_status(self.staralt.data_dict)
-            self.logger.info(f"Today's night visibility analysis complete - Status: {today_visibility.get('status')}")
-            return today_visibility, self.staralt.data
-
+            self.logger.info(f"Today's night visibility analysis complete: {today_visibility.get('status', 'unknown')}")
+            
+            return today_visibility, data_dict
+            
         except Exception as e:
             self.logger.error(f"Error generating today's visibility: {e}")
-            raise
+            error_visibility = {
+                "status": "error",
+                "condition": f"Analysis failed: {str(e)}",
+                "message": "Could not analyze visibility",
+                "recommendation": "Manual observation planning required"
+            }
+            return error_visibility, {}
 
     def _generate_tomorrow_visibility(self, ra: float, dec: float, grb_name: str, minalt: float, minmoonsep: float) -> Tuple[Dict[str, Any], Any]:
         """Generate visibility data for tomorrow night"""
