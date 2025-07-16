@@ -690,17 +690,17 @@ class Staralt():
         plt.legend(loc='upper right')
         
         # Format x-axis
-        from matplotlib.dates import DateFormatter
+        import matplotlib.dates
         
         # Get the actual date from the data instead of hardcoding
         if target_times_num and len(target_times_num) > 0:
             # Use the first time point to determine the correct date
             sample_time = matplotlib.dates.num2date(target_times_num[0])
             date_str = sample_time.strftime('%m-%d')
-            plt.gca().xaxis.set_major_formatter(DateFormatter(f'%m-%d %H'))
+            plt.gca().xaxis.set_major_formatter(matplotlib.dates.DateFormatter(f'%m-%d %H'))
         else:
             # Fallback to current date
-            plt.gca().xaxis.set_major_formatter(DateFormatter('%m-%d %H'))
+            plt.gca().xaxis.set_major_formatter(matplotlib.dates.DateFormatter('%m-%d %H'))
         
         plt.xlabel('UTC Time [mm-dd hh]')
         plt.ylabel('Altitude [degrees]')
