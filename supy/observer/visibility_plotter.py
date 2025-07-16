@@ -152,7 +152,7 @@ class VisibilityPlotter:
     
     def _analyze_visibility_status(self, staralt_data_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Analyze visibility status based on staralt data and determine observability.
+        Analyze visibility status from staralt data using clear 4-case logic.
         
         Args:
             staralt_data_dict: Dictionary containing staralt analysis results
@@ -169,7 +169,7 @@ class VisibilityPlotter:
             "best_time": None,
             "current_altitude": 0,
             "current_moon_separation": 0,
-            "reason": "Unknown limitation",
+            "reason": "Analysis incomplete",  # Changed default
             "message": "Not observable",
             "recommendation": "Observation not possible"
         }
@@ -187,6 +187,16 @@ class VisibilityPlotter:
             min_moon_sep = staralt_data_dict.get("target_minmoonsep", 30)
             tonight = staralt_data_dict.get("tonight", {})
             
+            # Validate essential data
+            if not target_times or not target_alts or not target_moonsep:
+                self.logger.error("Missing essential visibility data from staralt")
+                result["status"] = "error"
+                result["condition"] = "Data Missing"
+                result["reason"] = "Essential visibility data not available from staralt analysis"
+                result["message"] = "Could not perform visibility analysis"
+                result["recommendation"] = "Check staralt configuration and observatory settings"
+                return result
+            
             # Ensure we're using the correct current time
             if now_datetime is None:
                 from astropy.time import Time
@@ -197,59 +207,96 @@ class VisibilityPlotter:
             sunset_night = tonight.get("sunset_night")
             sunrise_night = tonight.get("sunrise_night")
             
-            # Enhanced debugging
+            # Enhanced debugging for the specific issue
+            max_alt_tonight = max(target_alts) if target_alts else 0
+            min_moonsep_tonight = min(target_moonsep) if target_moonsep else 0
+            
             self.logger.debug(f"=== VISIBILITY ANALYSIS DEBUG ===")
             self.logger.debug(f"Current time: {now_datetime}")
-            self.logger.debug(f"Current date: {now_datetime.date() if now_datetime else 'None'}")
+            self.logger.debug(f"Tonight's max altitude: {max_alt_tonight:.1f}°")
+            self.logger.debug(f"Tonight's min moon separation: {min_moonsep_tonight:.1f}°")
+            self.logger.debug(f"Required min altitude: {min_altitude}°")
+            self.logger.debug(f"Required min moon separation: {min_moon_sep}°")
             self.logger.debug(f"Tonight's sunset: {sunset_night}")
             self.logger.debug(f"Tonight's sunrise: {sunrise_night}")
+            self.logger.debug(f"Number of time points: {len(target_times)}")
+            self.logger.debug(f"Color target length: {len(color_target)}")
             
-            # Validate input data
-            if not target_times or not target_alts:
-                self.logger.error("Missing target times or altitudes data")
+            # Convert target times to datetime objects for easier handling
+            try:
+                target_times_dt = []
+                for t in target_times:
+                    if hasattr(t, 'datetime'):  # astropy.Time object
+                        target_times_dt.append(t.datetime)
+                    elif isinstance(t, datetime):  # already datetime
+                        target_times_dt.append(t)
+                    else:  # try to convert
+                        target_times_dt.append(datetime.fromisoformat(str(t)))
+            except Exception as time_error:
+                self.logger.error(f"Error converting target times: {time_error}")
                 result["status"] = "error"
-                result["condition"] = "Missing observational data"
+                result["condition"] = "Time Conversion Error"
+                result["reason"] = f"Could not convert target times to datetime objects: {time_error}"
+                result["message"] = "Time data formatting issue"
+                result["recommendation"] = "Check time zone and date formatting in staralt"
                 return result
-            
-            # Convert target_times to datetime objects if they aren't already
-            target_times_dt = []
-            for t in target_times:
-                if isinstance(t, str):
-                    target_times_dt.append(datetime.fromisoformat(t))
-                elif hasattr(t, 'datetime'):
-                    target_times_dt.append(t.datetime)
-                else:
-                    target_times_dt.append(t)
             
             # Find current time index
             now_idx = None
             min_time_diff = float('inf')
-            for i, t in enumerate(target_times_dt):
-                time_diff = abs((t - now_datetime).total_seconds())
+            for i, dt in enumerate(target_times_dt):
+                time_diff = abs((dt - now_datetime).total_seconds())
                 if time_diff < min_time_diff:
                     min_time_diff = time_diff
                     now_idx = i
             
             if now_idx is None:
-                self.logger.error("Could not find current time index")
+                self.logger.error("Could not find current time index in target times")
                 result["status"] = "error"
-                result["condition"] = "Time indexing failed"
+                result["condition"] = "Time Index Error"
+                result["reason"] = "Could not match current time with calculated visibility timeline"
+                result["message"] = "Timeline synchronization issue"
+                result["recommendation"] = "Check observatory time zone configuration"
                 return result
             
-            # Update current conditions
+            # Get current conditions
             result["current_altitude"] = target_alts[now_idx] if now_idx < len(target_alts) else 0
             result["current_moon_separation"] = target_moonsep[now_idx] if now_idx < len(target_moonsep) else 0
             
-            # Find observable periods (green color indicates observable)
-            observable_indices = [i for i, color in enumerate(color_target) if color == 'green']
+            self.logger.debug(f"Current conditions - Alt: {result['current_altitude']:.1f}°, "
+                            f"Moon sep: {result['current_moon_separation']:.1f}°")
             
-            self.logger.debug(f"Found {len(observable_indices)} observable periods")
+            # Find observable periods (both altitude and moon separation criteria met)
+            observable_indices = []
+            for i in range(len(target_alts)):
+                if i < len(target_moonsep):  # Safety check
+                    alt_ok = target_alts[i] >= min_altitude
+                    moon_ok = target_moonsep[i] >= min_moon_sep
+                    if alt_ok and moon_ok:
+                        observable_indices.append(i)
             
-            # Check if currently observable
-            currently_observable = now_idx in observable_indices
+            self.logger.debug(f"Found {len(observable_indices)} observable time points out of {len(target_alts)}")
             
-            if currently_observable:
-                # Case 1: Observable now
+            # If no observable periods found, analyze why
+            if not observable_indices:
+                self.logger.info("No observable periods found - analyzing limitations")
+                
+                # Count how many points fail each criterion
+                alt_failures = sum(1 for alt in target_alts if alt < min_altitude)
+                moon_failures = sum(1 for moon in target_moonsep if moon < min_moon_sep)
+                
+                self.logger.debug(f"Altitude failures: {alt_failures}/{len(target_alts)}")
+                self.logger.debug(f"Moon separation failures: {moon_failures}/{len(target_moonsep)}")
+                
+                # Use the enhanced not_observable handler
+                return self._handle_not_observable_tonight(
+                    result, target_alts, target_moonsep, min_altitude, min_moon_sep, tonight, now_datetime
+                )
+            
+            # Check if currently observable (now_idx in observable_indices)
+            if now_idx in observable_indices:
+                # Case 1: Currently observable
+                self.logger.info("Processing target observable later tonight")
                 return self._handle_observable_now(result, observable_indices, target_times_dt, now_datetime)
             else:
                 # Case 2: Observable later tonight
@@ -260,9 +307,10 @@ class VisibilityPlotter:
         except Exception as e:
             self.logger.error(f"Error in visibility analysis: {e}", exc_info=True)
             result["status"] = "error"
-            result["condition"] = f"Analysis failed: {str(e)}"
-            result["message"] = "Could not analyze visibility"
-            result["recommendation"] = "Manual observation planning required"
+            result["condition"] = f"Analysis Exception"
+            result["reason"] = f"Unexpected error during visibility analysis: {str(e)}"
+            result["message"] = "Could not analyze visibility due to system error"
+            result["recommendation"] = "Check system logs and restart analysis if necessary"
             return result
     
     def _handle_observable_now(self, result: Dict[str, Any], observable_indices: List[int], 
@@ -379,9 +427,11 @@ class VisibilityPlotter:
         return result
     
     def _handle_not_observable_tonight(self, result: Dict[str, Any], target_alts: List[float], 
-                                      target_moonsep: List[float], min_altitude: float, min_moon_sep: float,
-                                      tonight: Dict[str, Any], now_datetime: datetime) -> Dict[str, Any]:
-        """Handle Cases 3 & 4: Not observable tonight"""
+                                    target_moonsep: List[float], min_altitude: float, min_moon_sep: float,
+                                    tonight: Dict[str, Any], now_datetime: datetime) -> Dict[str, Any]:
+        """
+        Handle Cases 3 & 4: Not observable tonight
+        """
         self.logger.info("Processing target not observable tonight")
         
         # Get tonight's observing window times
@@ -391,16 +441,31 @@ class VisibilityPlotter:
         # Check if we're past tonight's observing window
         is_past_observing_window = False
         if sunset_night and sunrise_night and now_datetime:
+            # Handle both datetime and astropy.Time objects
+            if hasattr(sunset_night, 'datetime'):
+                sunset_dt = sunset_night.datetime
+                sunrise_dt = sunrise_night.datetime
+            else:
+                sunset_dt = sunset_night
+                sunrise_dt = sunrise_night
+                
             # If current time is past sunrise (astronomical dawn), tonight's window is over
-            if now_datetime > sunrise_night:
+            if now_datetime > sunrise_dt:
                 is_past_observing_window = True
                 self.logger.info("Current time is past tonight's observing window")
         
-        # Get maximum conditions tonight
-        max_alt = max(target_alts) if target_alts else 0
+        # Get maximum conditions tonight with better error handling
+        max_alt = max(target_alts) if target_alts else -90
         min_moonsep_tonight = min(target_moonsep) if target_moonsep else 0
         
+        # Count how many time points meet each criterion
+        alt_passing_points = sum(1 for alt in target_alts if alt >= min_altitude) if target_alts else 0
+        moon_passing_points = sum(1 for moon in target_moonsep if moon >= min_moon_sep) if target_moonsep else 0
+        total_points = len(target_alts)
+        
         self.logger.info(f"Tonight's max conditions - Alt: {max_alt:.1f}°, Moon sep: {min_moonsep_tonight:.1f}°")
+        self.logger.info(f"Points meeting altitude criterion: {alt_passing_points}/{total_points}")
+        self.logger.info(f"Points meeting moon separation criterion: {moon_passing_points}/{total_points}")
         
         # Determine if target might be observable tomorrow
         # Case 3: Observable tomorrow - target has reasonable altitude potential
@@ -434,23 +499,47 @@ class VisibilityPlotter:
             self.logger.info(f"Observable tomorrow - Reason: {tomorrow_reason}")
             return result
         
-        # Case 4: Not observable at all
+        # Case 4: Not observable at all - Enhanced diagnostic reasons
         result["status"] = "not_observable"
         
+        # Provide specific, actionable reasons
         if max_alt <= 0:
             result["condition"] = "Never Rises"
-            result["reason"] = "Target never rises above horizon from Chile"
+            result["reason"] = "Target never rises above horizon from this observatory location"
         elif max_alt < min_altitude - 20:
             result["condition"] = "Too Low Altitude"
-            result["reason"] = f"Target maximum altitude ({max_alt:.1f}°) far below minimum ({min_altitude}°)"
+            result["reason"] = f"Target maximum altitude ({max_alt:.1f}°) far below minimum requirement ({min_altitude}°)"
         elif min_moonsep_tonight < min_moon_sep - 20:
             result["condition"] = "Severe Moon Interference"
-            result["reason"] = f"Target too close to Moon (min separation: {min_moonsep_tonight:.1f}°)"
+            result["reason"] = f"Target too close to Moon throughout night (minimum separation: {min_moonsep_tonight:.1f}°, required: {min_moon_sep}°)"
+        elif alt_passing_points == 0:
+            result["condition"] = "Altitude Never Sufficient"
+            result["reason"] = f"Target never reaches minimum altitude ({min_altitude}°) - maximum tonight: {max_alt:.1f}°"
+        elif moon_passing_points == 0:
+            result["condition"] = "Moon Always Too Close"
+            result["reason"] = f"Moon always closer than {min_moon_sep}° - minimum separation tonight: {min_moonsep_tonight:.1f}°"
+        elif is_past_observing_window:
+            result["condition"] = "Observing Window Closed"
+            result["reason"] = "Tonight's astronomical observing window has ended"
         else:
-            result["condition"] = "Multiple Limitations"
-            result["reason"] = f"Altitude ({max_alt:.1f}°) and moon separation ({min_moonsep_tonight:.1f}°) issues"
+            # More detailed analysis for complex cases
+            alt_percentage = (alt_passing_points / total_points * 100) if total_points > 0 else 0
+            moon_percentage = (moon_passing_points / total_points * 100) if total_points > 0 else 0
+            
+            if alt_percentage < 10 and moon_percentage < 10:
+                result["condition"] = "Multiple Severe Limitations"
+                result["reason"] = f"Both altitude ({max_alt:.1f}°) and moon separation ({min_moonsep_tonight:.1f}°) insufficient"
+            elif alt_percentage < 10:
+                result["condition"] = "Primary Issue: Low Altitude"
+                result["reason"] = f"Altitude insufficient most of night (max: {max_alt:.1f}°, need: {min_altitude}°)"
+            elif moon_percentage < 10:
+                result["condition"] = "Primary Issue: Moon Interference"
+                result["reason"] = f"Moon too close most of night (min sep: {min_moonsep_tonight:.1f}°, need: {min_moon_sep}°)"
+            else:
+                result["condition"] = "Timing Constraints"
+                result["reason"] = f"Altitude and moon conditions never align properly (alt: {alt_percentage:.0f}% good, moon: {moon_percentage:.0f}% good)"
         
-        result["recommendation"] = "Observation not feasible from Chile"
+        result["recommendation"] = "Consider different observation time or modified observing criteria"
         self.logger.info(f"Not observable - {result['condition']}: {result['reason']}")
         
         return result
