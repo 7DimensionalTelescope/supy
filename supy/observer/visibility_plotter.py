@@ -87,280 +87,282 @@ class VisibilityPlotter:
         # Log initialization details
         self.logger.debug(f"Observer location: Lat {self.observer._latitude}, Lon {self.observer._longitude}")
     
-    def _analyze_visibility_status(self, staralt_data_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def _analyze_visibility_status(self, data_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Analyze visibility status from staralt data using clear 4-case logic.
-        
-        Args:
-            staralt_data_dict: Dictionary containing staralt analysis results
-            
-        Returns:
-            Dictionary with visibility status and details
+        Optimized visibility analysis using existing staralt functionality.
         """
-        # Initialize result structure
         result = {
             "status": "unknown",
-            "condition": "Analysis pending", 
-            "observable_start": None,
-            "observable_end": None,
-            "best_time": None,
-            "current_altitude": 0,
-            "current_moon_separation": 0,
-            "reason": "Analysis incomplete",  # Changed default
-            "message": "Not observable",
-            "recommendation": "Observation not possible"
+            "condition": "Unknown", 
+            "message": "Analysis pending",
+            "recommendation": "Check visibility conditions"
         }
         
         try:
-            self.logger.info("Starting visibility status analysis")
+            # Use existing data structure from staralt
+            now_datetime = data_dict.get("now_datetime")
+            if hasattr(now_datetime, 'datetime'):
+                now_datetime = now_datetime.datetime
             
-            # Extract data from staralt analysis
-            now_datetime = staralt_data_dict.get("now_datetime")
-            color_target = staralt_data_dict.get("color_target", [])
-            target_times = staralt_data_dict.get("target_times", [])
-            target_alts = staralt_data_dict.get("target_alts", [])
-            target_moonsep = staralt_data_dict.get("target_moonsep", [])
-            min_altitude = staralt_data_dict.get("target_minalt", 30)
-            min_moon_sep = staralt_data_dict.get("target_minmoonsep", 30)
-            tonight = staralt_data_dict.get("tonight", {})
+            self.logger.info(f"Optimized visibility analysis at {now_datetime}")
             
-            # Validate essential data
-            if not target_times or not target_alts or not target_moonsep:
-                self.logger.error("Missing essential visibility data from staralt")
-                result["status"] = "error"
-                result["condition"] = "Data Missing"
-                result["reason"] = "Essential visibility data not available from staralt analysis"
-                result["message"] = "Could not perform visibility analysis"
-                result["recommendation"] = "Check staralt configuration and observatory settings"
+            # STEP 1: Check if target is observable using existing staralt methods
+            if not self.staralt.is_observable:
+                self.logger.info("Target not observable according to staralt analysis")
+                
+                # Check if it's daytime using existing tonight data
+                tonight = data_dict.get("tonight", {})
+                is_day, day_reason = self._is_daytime(now_datetime, tonight)
+                
+                if is_day:
+                    result["status"] = "not_observable"
+                    result["condition"] = "Daytime"
+                    result["reason"] = "Currently daytime"
+                    result["message"] = "Cannot observe during daytime"
+                    result["recommendation"] = "Wait for nighttime"
+                    return result
+                
+                # Check if tonight's window is closed using existing staralt
+                if hasattr(self.staralt, 'is_within_night_window'):
+                    within_window = self.staralt.is_within_night_window(now_datetime)
+                    if not within_window:
+                        result["status"] = "observable_tomorrow"
+                        result["condition"] = "Night Window Closed"
+                        result["reason"] = "Tonight's observing window has ended"
+                        result["message"] = "Check tomorrow's visibility"
+                        result["recommendation"] = "Plan for tomorrow night"
+                        return result
+                
+                # Use existing next_observable_night to check tomorrow
+                next_observable = self.staralt.next_observable_night(search_days=1)
+                if next_observable:
+                    result["status"] = "observable_tomorrow"
+                    result["condition"] = "Observable Tomorrow"
+                    result["reason"] = "Target conditions not suitable tonight"
+                    result["message"] = "Check tomorrow's visibility"
+                    result["recommendation"] = "Plan for tomorrow night"
+                else:
+                    result["status"] = "not_observable"
+                    result["condition"] = "Poor Conditions"
+                    result["reason"] = "Target not observable in near future"
+                    result["message"] = "Poor observing conditions"
+                    result["recommendation"] = "Consider different target or criteria"
+                
                 return result
             
-            # Ensure we're using the correct current time
-            if now_datetime is None:
-                from astropy.time import Time
-                now_datetime = Time.now().datetime
-                self.logger.warning("now_datetime was None, using current UTC time as fallback")
-                
-            # Extract sunset/sunrise for debugging
-            sunset_night = tonight.get("sunset_night")
-            sunrise_night = tonight.get("sunrise_night")
+            # STEP 2: Target is observable - determine current vs later using existing staralt data
+            self.logger.info("Target is observable according to staralt analysis")
             
-            # Enhanced debugging for the specific issue
-            max_alt_tonight = max(target_alts) if target_alts else 0
-            min_moonsep_tonight = min(target_moonsep) if target_moonsep else 0
+            # Use existing min_max_obstime for current observability
+            observable_window = self.staralt.min_max_obstime
+            if not observable_window:
+                self.logger.warning("Observable but no time window found - using fallback analysis")
+                return self._fallback_analysis(data_dict, result)
             
-            self.logger.debug(f"=== VISIBILITY ANALYSIS DEBUG ===")
-            self.logger.debug(f"Current time: {now_datetime}")
-            self.logger.debug(f"Tonight's max altitude: {max_alt_tonight:.1f}°")
-            self.logger.debug(f"Tonight's min moon separation: {min_moonsep_tonight:.1f}°")
-            self.logger.debug(f"Required min altitude: {min_altitude}°")
-            self.logger.debug(f"Required min moon separation: {min_moon_sep}°")
-            self.logger.debug(f"Tonight's sunset: {sunset_night}")
-            self.logger.debug(f"Tonight's sunrise: {sunrise_night}")
-            self.logger.debug(f"Number of time points: {len(target_times)}")
-            self.logger.debug(f"Color target length: {len(color_target)}")
+            start_time, end_time = observable_window
+            start_dt = start_time.datetime if hasattr(start_time, 'datetime') else start_time
+            end_dt = end_time.datetime if hasattr(end_time, 'datetime') else end_time
             
-            # Convert target times to datetime objects for easier handling
-            try:
-                target_times_dt = []
-                for t in target_times:
-                    if hasattr(t, 'datetime'):  # astropy.Time object
-                        target_times_dt.append(t.datetime)
-                    elif isinstance(t, datetime):  # already datetime
-                        target_times_dt.append(t)
-                    else:  # try to convert
-                        target_times_dt.append(datetime.fromisoformat(str(t)))
-            except Exception as time_error:
-                self.logger.error(f"Error converting target times: {time_error}")
-                result["status"] = "error"
-                result["condition"] = "Time Conversion Error"
-                result["reason"] = f"Could not convert target times to datetime objects: {time_error}"
-                result["message"] = "Time data formatting issue"
-                result["recommendation"] = "Check time zone and date formatting in staralt"
-                return result
-            
-            # Find current time index
-            now_idx = None
-            min_time_diff = float('inf')
-            for i, dt in enumerate(target_times_dt):
-                time_diff = abs((dt - now_datetime).total_seconds())
-                if time_diff < min_time_diff:
-                    min_time_diff = time_diff
-                    now_idx = i
-            
-            if now_idx is None:
-                self.logger.error("Could not find current time index in target times")
-                result["status"] = "error"
-                result["condition"] = "Time Index Error"
-                result["reason"] = "Could not match current time with calculated visibility timeline"
-                result["message"] = "Timeline synchronization issue"
-                result["recommendation"] = "Check observatory time zone configuration"
-                return result
-            
-            # Get current conditions
-            result["current_altitude"] = target_alts[now_idx] if now_idx < len(target_alts) else 0
-            result["current_moon_separation"] = target_moonsep[now_idx] if now_idx < len(target_moonsep) else 0
-            
-            self.logger.debug(f"Current conditions - Alt: {result['current_altitude']:.1f}°, "
-                            f"Moon sep: {result['current_moon_separation']:.1f}°")
-            
-            # Find observable periods (both altitude and moon separation criteria met)
-            observable_indices = []
-            for i in range(len(target_alts)):
-                if i < len(target_moonsep):  # Safety check
-                    alt_ok = target_alts[i] >= min_altitude
-                    moon_ok = target_moonsep[i] >= min_moon_sep
-                    if alt_ok and moon_ok:
-                        observable_indices.append(i)
-            
-            self.logger.debug(f"Found {len(observable_indices)} observable time points out of {len(target_alts)}")
-            
-            # If no observable periods found, analyze why
-            if not observable_indices:
-                self.logger.info("No observable periods found - analyzing limitations")
-                
-                # Count how many points fail each criterion
-                alt_failures = sum(1 for alt in target_alts if alt < min_altitude)
-                moon_failures = sum(1 for moon in target_moonsep if moon < min_moon_sep)
-                
-                self.logger.debug(f"Altitude failures: {alt_failures}/{len(target_alts)}")
-                self.logger.debug(f"Moon separation failures: {moon_failures}/{len(target_moonsep)}")
-                
-                # Use the enhanced not_observable handler
-                return self._handle_not_observable_tonight(
-                    result, target_alts, target_moonsep, min_altitude, min_moon_sep, tonight, now_datetime
-                )
-            
-            # Check if currently observable (now_idx in observable_indices)
-            if now_idx in observable_indices:
-                # Case 1: Currently observable
-                self.logger.info("Processing target observable later tonight")
-                return self._handle_observable_now(result, observable_indices, target_times_dt, now_datetime)
+            # Check if currently within observable window
+            if start_dt <= now_datetime <= end_dt:
+                return self._handle_observable_now(result, start_dt, end_dt, now_datetime, data_dict)
+            elif now_datetime < start_dt:
+                return self._handle_observable_later(result, start_dt, end_dt, now_datetime)
             else:
-                # Case 2: Observable later tonight
-                return self._handle_observable_later(result, observable_indices, target_times_dt, 
-                                                    target_alts, target_moonsep, now_idx)
+                # Past tonight's window
+                result["status"] = "observable_tomorrow"
+                result["condition"] = "Tonight's Window Passed"
+                result["reason"] = "Target was observable earlier tonight"
+                result["message"] = "Check tomorrow's visibility"
+                result["recommendation"] = "Plan for tomorrow night"
+                return result
         
         except Exception as e:
-            self.logger.error(f"Error in visibility analysis: {e}", exc_info=True)
+            self.logger.error(f"Optimized visibility analysis error: {e}", exc_info=True)
             result["status"] = "error"
-            result["condition"] = f"Analysis Exception"
-            result["reason"] = f"Unexpected error during visibility analysis: {str(e)}"
-            result["message"] = "Could not analyze visibility due to system error"
-            result["recommendation"] = "Check system logs and restart analysis if necessary"
+            result["condition"] = "Analysis Error"
+            result["reason"] = f"System error: {str(e)}"
+            result["message"] = "Analysis failed"
+            result["recommendation"] = "Check logs and retry"
             return result
-    
-    def _handle_observable_now(self, result: Dict[str, Any], observable_indices: List[int], 
-                              target_times_dt: List[datetime], now_datetime: datetime) -> Dict[str, Any]:
-        """Handle Case 1: Currently observable"""
-        self.logger.info("Processing currently observable target")
+
+    def _handle_observable_now(self, result: Dict[str, Any], start_dt: datetime, 
+                                    end_dt: datetime, now_datetime: datetime, 
+                                    data_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle currently observable case using existing staralt calculations.
+        """
+        self.logger.info("Target currently observable (optimized analysis)")
         
         result["status"] = "observable_now"
-        
-        # Find the current observable window
-        start_idx = min(observable_indices)
-        end_idx = max(observable_indices)
-        
-        result["observable_start"] = target_times_dt[start_idx]
-        result["observable_end"] = target_times_dt[end_idx]
-        result["observable_hours"] = (result["observable_end"] - result["observable_start"]).total_seconds() / 3600
+        result["observable_start"] = start_dt
+        result["observable_end"] = end_dt
+        result["observable_hours"] = (end_dt - start_dt).total_seconds() / 3600
         
         # Calculate remaining time
-        remaining_seconds = (result["observable_end"] - now_datetime).total_seconds()
+        remaining_seconds = (end_dt - now_datetime).total_seconds()
         result["remaining_hours"] = max(0, remaining_seconds / 3600)
         
-        self.logger.info(f"Observable window: {result['observable_hours']:.1f}h total, "
-                        f"{result['remaining_hours']:.1f}h remaining")
+        # Get current conditions from existing data
+        target_alts = data_dict.get("target_alts", [])
+        target_moonsep = data_dict.get("target_moonsep", [])
+        target_times_dt = [
+            t.datetime if hasattr(t, 'datetime') else t 
+            for t in data_dict.get("target_times", [])
+        ]
         
-        # Set condition based on current altitude and remaining time
-        if result["current_altitude"] > 60 and result["remaining_hours"] > 2:
-            result["condition"] = "Excellent Observing Conditions"
-        elif result["current_altitude"] > 45 and result["remaining_hours"] > 1:
-            result["condition"] = "Good Observing Conditions"
+        # Find current conditions using existing data arrays
+        if target_times_dt and target_alts:
+            time_diffs = [abs((t - now_datetime).total_seconds()) for t in target_times_dt]
+            now_idx = time_diffs.index(min(time_diffs))
+            
+            if now_idx < len(target_alts):
+                result["current_altitude"] = target_alts[now_idx]
+            if now_idx < len(target_moonsep):
+                result["current_moon_separation"] = target_moonsep[now_idx]
+        
+        # Set condition based on remaining time and altitude
+        current_alt = result.get("current_altitude", 0)
+        if current_alt > 60 and result["remaining_hours"] > 2:
+            result["condition"] = "Excellent Conditions"
+        elif current_alt > 45 and result["remaining_hours"] > 1:
+            result["condition"] = "Good Conditions"
         elif result["remaining_hours"] < 1:
-            result["condition"] = "Limited Time Remaining"
+            result["condition"] = "Limited Time"
         else:
-            result["condition"] = "Acceptable Observing Conditions"
+            result["condition"] = "Acceptable Conditions"
         
+        result["message"] = f"Observable for {result['remaining_hours']:.1f} more hours"
         result["recommendation"] = "Begin observations immediately"
         
-        self.logger.info(f"Observable now - Condition: {result['condition']}")
         return result
-    
-    def _handle_observable_later(self, result: Dict[str, Any], observable_indices: List[int], 
-                                target_times_dt: List[datetime], target_alts: List[float], 
-                                target_moonsep: List[float], now_idx: int) -> Dict[str, Any]:
+
+
+    def _handle_observable_later(self, result: Dict[str, Any], start_dt: datetime, 
+                                        end_dt: datetime, now_datetime: datetime) -> Dict[str, Any]:
         """
-        Handle Case 2: Observable later tonight
-        
-        Args:
-            result: Dictionary to populate with visibility results
-            observable_indices: List of indices where target is observable
-            target_times_dt: List of datetime objects for target times
-            target_alts: List of target altitudes (not used but kept for compatibility)
-            target_moonsep: List of moon separations (not used but kept for compatibility)
-            now_idx: Index of current time in the arrays
-            
-        Returns:
-            Updated result dictionary with visibility information
+        Handle observable later case using existing staralt calculations.
         """
-        self.logger.info("Processing target observable later tonight")
-        
-        # Get current datetime from the target_times_dt array
-        now_datetime = target_times_dt[now_idx]
+        self.logger.info("Target observable later tonight (optimized analysis)")
         
         result["status"] = "observable_later"
+        result["observable_start"] = start_dt
+        result["observable_end"] = end_dt
+        result["observable_hours"] = (end_dt - start_dt).total_seconds() / 3600
         
-        # Find next observable window
-        future_indices = [i for i in observable_indices if i > now_idx]
-        if not future_indices:
-            # This shouldn't happen if we're in this case, but handle it gracefully
-            result["status"] = "not_observable"
-            result["condition"] = "No future observable periods tonight"
-            result["message"] = "Target becomes unobservable for the rest of the night"
-            result["recommendation"] = "Consider tomorrow's visibility"
-            return result
+        # Calculate time until observable
+        time_until = (start_dt - now_datetime).total_seconds() / 3600
+        result["hours_until_observable"] = max(0, time_until)
         
-        start_idx = min(future_indices)
-        end_idx = max(observable_indices)
-        
-        result["observable_start"] = target_times_dt[start_idx]
-        result["observable_end"] = target_times_dt[end_idx]
-        result["observable_hours"] = (result["observable_end"] - result["observable_start"]).total_seconds() / 3600
-        
-        # Calculate precise time until observable
-        time_until_observable = (result["observable_start"] - now_datetime).total_seconds() / 3600
-        result["hours_until_observable"] = max(0, time_until_observable)
-        
-        # Calculate minutes for more precision when less than 1 hour
-        if result["hours_until_observable"] < 1:
-            minutes_until = (result["observable_start"] - now_datetime).total_seconds() / 60
-            result["minutes_until_observable"] = max(0, minutes_until)
-            self.logger.info(f"Observable in {minutes_until:.0f} minutes")
-        else:
-            self.logger.info(f"Observable in {time_until_observable:.1f} hours")
-        
-        # Enhanced condition setting
-        if time_until_observable < 0.5:  # Less than 30 minutes
+        # Set condition based on timing
+        if time_until < 0.5:
             result["condition"] = "Observable Very Soon"
             result["urgency"] = "high"
-            result["recommendation"] = "Prepare for immediate observations"
-        elif time_until_observable < 1:  # Less than 1 hour
+        elif time_until < 1:
             result["condition"] = "Observable Soon"
             result["urgency"] = "medium"
-            result["recommendation"] = "Prepare observation setup"
-        elif time_until_observable < 3:  # Less than 3 hours
+        elif time_until < 3:
             result["condition"] = "Observable Later Tonight"
             result["urgency"] = "low"
-            result["recommendation"] = "Plan observations for later"
         else:
             result["condition"] = "Observable Much Later"
             result["urgency"] = "low"
-            result["recommendation"] = "Consider if worth waiting"
         
-        result["message"] = f"Observable in {result['hours_until_observable']:.1f} hours"
+        result["message"] = f"Observable in {time_until:.1f} hours"
+        result["recommendation"] = "Prepare for observations"
         
-        self.logger.info(f"Observable later - Condition: {result['condition']}")
         return result
+
+    def _fallback_analysis(self, data_dict: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Fallback analysis when staralt methods don't provide complete info.
+        Uses existing data arrays as backup.
+        """
+        self.logger.warning("Using fallback visibility analysis")
+        
+        try:
+            # Use existing color-coded visibility from data_dict
+            color_target = data_dict.get("color_target", [])
+            target_times_dt = [
+                t.datetime if hasattr(t, 'datetime') else t 
+                for t in data_dict.get("target_times", [])
+            ]
+            now_datetime = data_dict.get("now_datetime")
+            if hasattr(now_datetime, 'datetime'):
+                now_datetime = now_datetime.datetime
+            
+            # Get observable indices using existing color coding
+            observable_indices = [i for i, color in enumerate(color_target) if color == 'g']
+            
+            if not observable_indices:
+                result["status"] = "not_observable"
+                result["condition"] = "No Observable Periods"
+                result["reason"] = "Target does not meet observing criteria tonight"
+                return result
+            
+            # Find current time index
+            if target_times_dt:
+                time_diffs = [abs((t - now_datetime).total_seconds()) for t in target_times_dt]
+                now_idx = time_diffs.index(min(time_diffs))
+                
+                if now_idx in observable_indices:
+                    result["status"] = "observable_now"
+                    result["condition"] = "Currently Observable (Fallback)"
+                else:
+                    result["status"] = "observable_later"
+                    result["condition"] = "Observable Later (Fallback)"
+            
+            result["message"] = "Fallback analysis used"
+            result["recommendation"] = "Verify with detailed analysis"
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Fallback analysis failed: {e}")
+            result["status"] = "error"
+            result["condition"] = "Analysis Failed"
+            result["reason"] = "Both primary and fallback analysis failed"
+            return result
+
+    def _is_daytime(self, now_datetime: datetime, tonight: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        Enhanced daytime check using existing staralt tonight data.
+        Leverages bumper utilities for safe datetime handling.
+        """
+        from supy.utils import bumper  # Use existing utility
+        
+        self.logger.debug(f"Checking daytime status at {now_datetime}")
+        
+        # Use existing civil twilight times from staralt calculations
+        sunset_civil = tonight.get("sunset_civil")
+        sunrise_civil = tonight.get("sunrise_civil")
+        
+        if not sunset_civil or not sunrise_civil:
+            self.logger.warning("Civil twilight times not available")
+            return False, "Twilight times unavailable"
+        
+        # Use bumper for safe datetime conversion (existing utility)
+        sunset_dt = bumper.safe_get_datetime(sunset_civil)
+        sunrise_dt = bumper.safe_get_datetime(sunrise_civil)
+        
+        if not sunset_dt or not sunrise_dt:
+            return False, "Time conversion failed"
+        
+        # Check if between sunrise and sunset (daytime)
+        if sunset_dt > sunrise_dt:
+            # Same day case
+            is_day = sunrise_dt <= now_datetime <= sunset_dt
+        else:
+            # Cross-midnight case
+            is_day = now_datetime >= sunrise_dt or now_datetime <= sunset_dt
+        
+        reason = f"Civil twilight: {sunrise_dt.strftime('%H:%M')} - {sunset_dt.strftime('%H:%M')}"
+        
+        if is_day:
+            self.logger.info(f"Daytime detected: {reason}")
+        else:
+            self.logger.debug(f"Nighttime confirmed: {reason}")
+        
+        return is_day, reason
     
     def _handle_not_observable_tonight(self, result: Dict[str, Any], target_alts: List[float], 
                                     target_moonsep: List[float], min_altitude: float, min_moon_sep: float,

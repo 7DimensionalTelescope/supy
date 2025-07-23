@@ -184,6 +184,36 @@ class Staralt():
         
         self.tonight = obsnight
 
+    def is_within_night_window(self, check_time=None):
+        """
+        Check if given time is within tonight's astronomical observing window.
+        Uses existing _set_night() calculations.
+        
+        Args:
+            check_time: datetime or Time object to check (default: current time)
+            
+        Returns:
+            bool: True if within night window, False otherwise
+        """
+        if check_time is None:
+            check_time = self.utctime
+        
+        if not isinstance(check_time, Time):
+            check_time = Time(check_time)
+        
+        # Use existing tonight calculations
+        if not hasattr(self, 'tonight') or not self.tonight:
+            self._set_night(check_time)
+        
+        sunset_night = self.tonight.sunset_night
+        sunrise_night = self.tonight.sunrise_night
+        
+        if not sunset_night or not sunrise_night:
+            return False
+        
+        # Check if within astronomical night window
+        return sunset_night <= check_time <= sunrise_night
+
     def _get_skycoord(self, ra: Union[str, float], dec: Union[str, float]) -> SkyCoord:
         """
         Convert RA and Dec to SkyCoord object.
