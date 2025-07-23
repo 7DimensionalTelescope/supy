@@ -83,72 +83,9 @@ class VisibilityPlotter:
         # Initialize observer and staralt
         self.observer = mainObserver()  # Use default parameters
         self.staralt = Staralt(self.observer, logger=self.logger)
-
-        # Define timezones
-        self.chile_tz = pytz.timezone("America/Santiago")
-        self.korea_tz = pytz.timezone("Asia/Seoul")
         
         # Log initialization details
         self.logger.debug(f"Observer location: Lat {self.observer._latitude}, Lon {self.observer._longitude}")
-        self.logger.debug(f"Timezone setup: Chile={self.chile_tz}, Korea={self.korea_tz}")
-    
-    def _convert_time_to_clt_kst(self, utc_time: Union[datetime, Time]) -> Tuple[datetime, datetime]:
-        """
-        Convert UTC time to Chile local time and Korean time.
-        
-        Args:
-            utc_time: Datetime in UTC or astropy Time object
-            
-        Returns:
-            Tuple containing (chile_time, korea_time)
-        """
-        try:
-            # Handle astropy Time objects
-            if isinstance(utc_time, Time):
-                utc_datetime = utc_time.datetime
-            else:
-                utc_datetime = utc_time
-                
-            # Ensure UTC time has timezone info
-            if utc_datetime.tzinfo is None:
-                utc_datetime = pytz.utc.localize(utc_datetime)
-            elif utc_datetime.tzinfo != pytz.utc:
-                # Convert to UTC if it's in a different timezone
-                utc_datetime = utc_datetime.astimezone(pytz.utc)
-                
-            # Convert to Chile and Korea times
-            chile_time = utc_datetime.astimezone(self.chile_tz)
-            korea_time = utc_datetime.astimezone(self.korea_tz)
-            
-            self.logger.debug(f"Time conversion - UTC: {utc_datetime}, CLT: {chile_time}, KST: {korea_time}")
-            return chile_time, korea_time
-            
-        except Exception as e:
-            self.logger.error(f"Error converting time zones: {e}")
-            raise
-    
-    def _format_time_clt_kst(self, utc_time: Optional[datetime]) -> str:
-        """
-        Format time in both CLT and KST timezones.
-        
-        Args:
-            utc_time: Datetime in UTC, or None
-            
-        Returns:
-            String with formatted time in both timezones, or "Unknown" if utc_time is None
-        """
-        if utc_time is None:
-            self.logger.debug("Time formatting requested for None datetime")
-            return "Unknown"
-            
-        try:
-            chile_time, korea_time = self._convert_time_to_clt_kst(utc_time)
-            formatted_time = f"{chile_time.strftime('%H:%M')} CLT / {korea_time.strftime('%H:%M')} KST"
-            self.logger.debug(f"Formatted time: {formatted_time}")
-            return formatted_time
-        except Exception as e:
-            self.logger.error(f"Error formatting time: {e}")
-            return "Error formatting time"
     
     def _analyze_visibility_status(self, staralt_data_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -300,7 +237,6 @@ class VisibilityPlotter:
                 return self._handle_observable_now(result, observable_indices, target_times_dt, now_datetime)
             else:
                 # Case 2: Observable later tonight
-                # FIXED: Remove the extra arguments that were causing the error
                 return self._handle_observable_later(result, observable_indices, target_times_dt, 
                                                     target_alts, target_moonsep, now_idx)
         
@@ -808,7 +744,7 @@ class VisibilityPlotter:
             if status == "observable_now":
                 # Currently observable details
                 end_time_obj = visibility_info.get("observable_end")
-                end_time = self._format_time_clt_kst(end_time_obj) if end_time_obj else "Unknown"
+                end_time = end_time_obj.strftime('%H:%M UTC') if end_time_obj else "Unknown"
                 
                 remaining = visibility_info.get("remaining_hours", 0)
                 alt = visibility_info.get("current_altitude", 0)
@@ -827,8 +763,8 @@ class VisibilityPlotter:
                 start_time_obj = visibility_info.get("observable_start")
                 end_time_obj = visibility_info.get("observable_end")
                 
-                start_time = self._format_time_clt_kst(start_time_obj) if start_time_obj else "Unknown"
-                end_time = self._format_time_clt_kst(end_time_obj) if end_time_obj else "Unknown"
+                start_time = start_time_obj.strftime('%H:%M UTC') if start_time_obj else "Unknown"
+                end_time = end_time_obj.strftime('%H:%M UTC') if end_time_obj else "Unknown"
                 
                 hours_until = visibility_info.get("hours_until_observable", 0)
                 window = visibility_info.get("observable_hours", 0)
@@ -852,8 +788,8 @@ class VisibilityPlotter:
                 details = [f"> - 📆 *Reason*: {reason}"]
                 
                 if start_time_obj and end_time_obj:
-                    start_time = self._format_time_clt_kst(start_time_obj)
-                    end_time = self._format_time_clt_kst(end_time_obj)
+                    start_time = start_time_obj.strftime('%H:%M UTC') if start_time_obj else "Unknown"
+                    end_time = end_time_obj.strftime('%H:%M UTC') if end_time_obj else "Unknown"
                     details.extend([
                         f"> - 🕙 *Tomorrow's window*: {start_time} to {end_time} (*{window:.1f} hours*)",
                         f"> - ⏳ *Check tomorrow*: ~24 hours from now"
