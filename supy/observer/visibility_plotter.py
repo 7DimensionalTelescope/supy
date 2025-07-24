@@ -328,7 +328,7 @@ class VisibilityPlotter:
         Enhanced daytime check using existing staralt tonight data.
         Leverages bumper utilities for safe datetime handling.
         """
-        from supy.utils import bumper  # Use existing utility
+        import bumper
         
         self.logger.debug(f"Checking daytime status at {now_datetime}")
         
