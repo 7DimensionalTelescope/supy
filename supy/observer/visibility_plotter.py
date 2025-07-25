@@ -160,8 +160,20 @@ class VisibilityPlotter:
                 return self._fallback_analysis(data_dict, result)
             
             start_time, end_time = observable_window
-            start_dt = start_time.datetime if hasattr(start_time, 'datetime') else start_time
-            end_dt = end_time.datetime if hasattr(end_time, 'datetime') else end_time
+            
+            if isinstance(start_time, np.str_):
+                start_dt = datetime.fromisoformat(str(start_time))
+            elif hasattr(start_time, 'datetime'):
+                start_dt = start_time.datetime
+            else:
+                start_dt = start_time
+                
+            if isinstance(end_time, np.str_):
+                end_dt = datetime.fromisoformat(str(end_time))
+            elif hasattr(end_time, 'datetime'):
+                end_dt = end_time.datetime
+            else:
+                end_dt = end_time
             
             # Check if currently within observable window
             if start_dt <= now_datetime <= end_dt:
