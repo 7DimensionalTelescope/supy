@@ -4,9 +4,11 @@ import time
 from datetime import datetime, timedelta
 from .mainobserver import mainObserver
 from .staralt import Staralt
+from . import bumper
 import matplotlib.pyplot as plt
 import logging
 import pytz
+import numpy as np
 from astropy.time import Time
 from astropy import units as u
 from typing import Optional, Dict, Tuple, Any, List, Union
@@ -87,6 +89,7 @@ class VisibilityPlotter:
         # Log initialization details
         self.logger.debug(f"Observer location: Lat {self.observer._latitude}, Lon {self.observer._longitude}")
     
+    # Analyze visibility status
     def _analyze_visibility_status(self, data_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
         Optimized visibility analysis using existing staralt functionality.
@@ -249,7 +252,6 @@ class VisibilityPlotter:
         
         return result
 
-
     def _handle_observable_later(self, result: Dict[str, Any], start_dt: datetime, 
                                         end_dt: datetime, now_datetime: datetime) -> Dict[str, Any]:
         """
@@ -285,97 +287,6 @@ class VisibilityPlotter:
         
         return result
 
-    def _fallback_analysis(self, data_dict: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Fallback analysis when staralt methods don't provide complete info.
-        Uses existing data arrays as backup.
-        """
-        self.logger.warning("Using fallback visibility analysis")
-        
-        try:
-            # Use existing color-coded visibility from data_dict
-            color_target = data_dict.get("color_target", [])
-            target_times_dt = [
-                t.datetime if hasattr(t, 'datetime') else t 
-                for t in data_dict.get("target_times", [])
-            ]
-            now_datetime = data_dict.get("now_datetime")
-            if hasattr(now_datetime, 'datetime'):
-                now_datetime = now_datetime.datetime
-            
-            # Get observable indices using existing color coding
-            observable_indices = [i for i, color in enumerate(color_target) if color == 'g']
-            
-            if not observable_indices:
-                result["status"] = "not_observable"
-                result["condition"] = "No Observable Periods"
-                result["reason"] = "Target does not meet observing criteria tonight"
-                return result
-            
-            # Find current time index
-            if target_times_dt:
-                time_diffs = [abs((t - now_datetime).total_seconds()) for t in target_times_dt]
-                now_idx = time_diffs.index(min(time_diffs))
-                
-                if now_idx in observable_indices:
-                    result["status"] = "observable_now"
-                    result["condition"] = "Currently Observable (Fallback)"
-                else:
-                    result["status"] = "observable_later"
-                    result["condition"] = "Observable Later (Fallback)"
-            
-            result["message"] = "Fallback analysis used"
-            result["recommendation"] = "Verify with detailed analysis"
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"Fallback analysis failed: {e}")
-            result["status"] = "error"
-            result["condition"] = "Analysis Failed"
-            result["reason"] = "Both primary and fallback analysis failed"
-            return result
-
-    def _is_daytime(self, now_datetime: datetime, tonight: Dict[str, Any]) -> Tuple[bool, str]:
-        """
-        Enhanced daytime check using existing staralt tonight data.
-        Leverages bumper utilities for safe datetime handling.
-        """
-        import bumper
-        
-        self.logger.debug(f"Checking daytime status at {now_datetime}")
-        
-        # Use existing civil twilight times from staralt calculations
-        sunset_civil = tonight.get("sunset_civil")
-        sunrise_civil = tonight.get("sunrise_civil")
-        
-        if not sunset_civil or not sunrise_civil:
-            self.logger.warning("Civil twilight times not available")
-            return False, "Twilight times unavailable"
-        
-        # Use bumper for safe datetime conversion (existing utility)
-        sunset_dt = bumper.safe_get_datetime(sunset_civil)
-        sunrise_dt = bumper.safe_get_datetime(sunrise_civil)
-        
-        if not sunset_dt or not sunrise_dt:
-            return False, "Time conversion failed"
-        
-        # Check if between sunrise and sunset (daytime)
-        if sunset_dt > sunrise_dt:
-            # Same day case
-            is_day = sunrise_dt <= now_datetime <= sunset_dt
-        else:
-            # Cross-midnight case
-            is_day = now_datetime >= sunrise_dt or now_datetime <= sunset_dt
-        
-        reason = f"Civil twilight: {sunrise_dt.strftime('%H:%M')} - {sunset_dt.strftime('%H:%M')}"
-        
-        if is_day:
-            self.logger.info(f"Daytime detected: {reason}")
-        else:
-            self.logger.debug(f"Nighttime confirmed: {reason}")
-        
-        return is_day, reason
-    
     def _handle_not_observable_tonight(self, result: Dict[str, Any], target_alts: List[float], 
                                     target_moonsep: List[float], min_altitude: float, min_moon_sep: float,
                                     tonight: Dict[str, Any], now_datetime: datetime) -> Dict[str, Any]:
@@ -494,6 +405,96 @@ class VisibilityPlotter:
         
         return result
 
+    def _fallback_analysis(self, data_dict: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Fallback analysis when staralt methods don't provide complete info.
+        Uses existing data arrays as backup.
+        """
+        self.logger.warning("Using fallback visibility analysis")
+        
+        try:
+            # Use existing color-coded visibility from data_dict
+            color_target = data_dict.get("color_target", [])
+            target_times_dt = [
+                t.datetime if hasattr(t, 'datetime') else t 
+                for t in data_dict.get("target_times", [])
+            ]
+            now_datetime = data_dict.get("now_datetime")
+            if hasattr(now_datetime, 'datetime'):
+                now_datetime = now_datetime.datetime
+            
+            # Get observable indices using existing color coding
+            observable_indices = [i for i, color in enumerate(color_target) if color == 'g']
+            
+            if not observable_indices:
+                result["status"] = "not_observable"
+                result["condition"] = "No Observable Periods"
+                result["reason"] = "Target does not meet observing criteria tonight"
+                return result
+            
+            # Find current time index
+            if target_times_dt:
+                time_diffs = [abs((t - now_datetime).total_seconds()) for t in target_times_dt]
+                now_idx = time_diffs.index(min(time_diffs))
+                
+                if now_idx in observable_indices:
+                    result["status"] = "observable_now"
+                    result["condition"] = "Currently Observable (Fallback)"
+                else:
+                    result["status"] = "observable_later"
+                    result["condition"] = "Observable Later (Fallback)"
+            
+            result["message"] = "Fallback analysis used"
+            result["recommendation"] = "Verify with detailed analysis"
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Fallback analysis failed: {e}")
+            result["status"] = "error"
+            result["condition"] = "Analysis Failed"
+            result["reason"] = "Both primary and fallback analysis failed"
+            return result
+
+    def _is_daytime(self, now_datetime: datetime, tonight: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        Daytime check using existing staralt tonight data.
+        Leverages bumper utilities for safe datetime handling.
+        """        
+        self.logger.debug(f"Checking daytime status at {now_datetime}")
+        
+        # Use existing civil twilight times from staralt calculations
+        sunset_civil = tonight.get("sunset_civil")
+        sunrise_civil = tonight.get("sunrise_civil")
+        
+        if not sunset_civil or not sunrise_civil:
+            self.logger.warning("Civil twilight times not available")
+            return False, "Twilight times unavailable"
+        
+        # Use bumper for safe datetime conversion (existing utility)
+        sunset_dt = bumper.safe_get_datetime(sunset_civil)
+        sunrise_dt = bumper.safe_get_datetime(sunrise_civil)
+        
+        if not sunset_dt or not sunrise_dt:
+            return False, "Time conversion failed"
+        
+        # Check if between sunrise and sunset (daytime)
+        if sunset_dt > sunrise_dt:
+            # Same day case
+            is_day = sunrise_dt <= now_datetime <= sunset_dt
+        else:
+            # Cross-midnight case
+            is_day = now_datetime >= sunrise_dt or now_datetime <= sunset_dt
+        
+        reason = f"Civil twilight: {sunrise_dt.strftime('%H:%M')} - {sunset_dt.strftime('%H:%M')}"
+        
+        if is_day:
+            self.logger.info(f"Daytime detected: {reason}")
+        else:
+            self.logger.debug(f"Nighttime confirmed: {reason}")
+        
+        return is_day, reason
+    
+    # Generate visibility plot
     def _generate_today_visibility(self, ra: float, dec: float, grb_name: str, 
                                 minalt: float, minmoonsep: float) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
@@ -716,6 +717,7 @@ class VisibilityPlotter:
             self.logger.error(f"Error creating visibility plot for {target_name}: {e}", exc_info=True)
             return None, {"status": "error", "message": str(e)}
 
+    # Format visibility message
     def format_visibility_message(self, visibility_info: Dict[str, Any]) -> str:
         """
         Format visibility information into a structured message for Slack.
