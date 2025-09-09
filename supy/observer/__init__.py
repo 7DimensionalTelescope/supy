@@ -1,11 +1,8 @@
-# Originally developed by Hyeonho Choi
+# Astronomy Visibility Package
+# Optimized for Chilean observatory observations
 
-# Contributors
-# - Hyeonho Choi
-# - Donggeun Tak
-# - YoungPyo Hong
+from .observer import Observer
+from .staralt import StarAltitude
+from .plotter import VisibilityPlotter
 
-
-from .mainobserver import *
-from .staralt import *
-from .visibility_plotter import *
+__all__ = ['Observer', 'StarAltitude', 'VisibilityPlotter']
