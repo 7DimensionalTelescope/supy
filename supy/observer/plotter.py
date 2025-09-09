@@ -83,6 +83,7 @@ class VisibilityPlotter:
             'dec': dec,
             'current_status': result.status,
             'when_observable': result.when,
+            'reason': result.reason,
             'current_window': None,
             'next_opportunity': None,
             'recommendation': self._get_recommendation(result, next_observable),
@@ -206,28 +207,29 @@ class VisibilityPlotter:
         status = analysis['current_status']
         if status == "OBSERVABLE":
             if analysis['when_observable'] == "now":
-                lines.append("🟢 **CURRENTLY OBSERVABLE**")
+                lines.append("🟢 *CURRENTLY OBSERVABLE*")
                 if analysis['current_window']:
                     remaining = analysis['current_window'].get('remaining_hours', 0)
-                    lines.append(f"⏱️ Remaining: {remaining:.1f} hours")
+                    lines.append(f"⏱️ *Remaining*: {remaining:.1f} hours")
             else:
-                lines.append("🟡 **OBSERVABLE LATER TONIGHT**")
+                lines.append("🟡 *OBSERVABLE LATER TONIGHT*")
                 if analysis['current_window']:
                     start = analysis['current_window']['start']
-                    lines.append(f"🕐 Starts at: {start.strftime('%H:%M UTC')}")
+                    lines.append(f"🕐 *Starts at*: {start.strftime('%H:%M UTC')}")
         else:
-            lines.append("🔴 **NOT OBSERVABLE TONIGHT**")
+            lines.append("🔴 *NOT OBSERVABLE TONIGHT*")
+            lines.append(f"❓ *Reason*: {analysis['reason']}")
         
         # Add window details
         if analysis.get('current_window'):
             window = analysis['current_window']
-            lines.append(f"📊 Max altitude: {window['max_altitude']:.1f}°")
-            lines.append(f"⏳ Duration: {window['duration_hours']:.1f} hours")
+            lines.append(f"📊 *Max altitude*: {window['max_altitude']:.1f}°")
+            lines.append(f"⏳ *Duration*: {window['duration_hours']:.1f} hours")
         
         # Add next opportunity
         if analysis.get('next_opportunity'):
             next_opp = analysis['next_opportunity']
-            lines.append(f"📅 Next opportunity: {next_opp['date']} "
+            lines.append(f"📅 *Next opportunity*: {next_opp['date']} "
                         f"(in {next_opp['days_from_now']} days)")
         
         # Add recommendation
