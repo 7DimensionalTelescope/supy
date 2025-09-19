@@ -98,7 +98,8 @@ class VisibilityPlotter:
                 'end': result.window.end_time.datetime,
                 'duration_hours': result.window.duration_hours,
                 'max_altitude': result.window.max_altitude,
-                'remaining_hours': result.window.time_remaining(Time.now()) if result.when == "now" else None
+                'remaining_hours': result.window.time_remaining(Time.now()) if result.when == "now" else None,
+                'hours_until_observable': result.window.time_until_start(Time.now()) if result.when == "now" else None
             }
         
         # Add next opportunity if found
