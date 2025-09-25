@@ -74,7 +74,8 @@ class StarAltitude:
     Optimized star altitude and visibility calculator.
     """
     
-    def __init__(self, observer: Optional[Observer] = None):
+    def __init__(self,
+                 observer: Optional[Observer] = None):
         """
         Initialize with observer.
         
@@ -119,12 +120,17 @@ class StarAltitude:
         if time is None:
             time = self.observer.now()
         
-        # Generate time grid for the night
-        time_grid = self.observer.get_night_grid(time, time_resolution=time_resolution)
-        
-        # Get tonight's window and all twilight times
+        # Get tonight's window to create a cache key
         sunset, sunrise = self.observer.tonight(time)
         twilight_times = self.observer.get_twilight_times(time)
+        
+        # Caching logic
+        cache_key = (ra, dec, sunset.jd, min_altitude, min_moon_separation)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+            
+        # Generate time grid for the night
+        time_grid = self.observer.get_night_grid(time, time_resolution=time_resolution)
         
         # Calculate all quantities in vectorized operations
         target_altaz = self.observer.target_altaz(ra, dec, time_grid)
@@ -138,8 +144,8 @@ class StarAltitude:
         
         # Single-pass visibility calculation
         is_observable = (
-            (altitudes > min_altitude) & 
-            (moon_separations > min_moon_separation) & 
+            (altitudes > min_alt) & 
+            (moon_separations > min_moon_sep) & 
             (sun_altitudes < -18)  # Astronomical night
         )
         
@@ -168,6 +174,8 @@ class StarAltitude:
             'ra': ra,
             'dec': dec
         }
+        # Store result in cache before returning
+        self._cache[cache_key] = (result, data_dict)
         
         return result, data_dict
     
