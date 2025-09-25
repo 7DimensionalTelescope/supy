@@ -144,8 +144,8 @@ class StarAltitude:
         
         # Single-pass visibility calculation
         is_observable = (
-            (altitudes > min_alt) & 
-            (moon_separations > min_moon_sep) & 
+            (altitudes > min_altitude) & 
+            (moon_separations > min_moon_separation) & 
             (sun_altitudes < -18)  # Astronomical night
         )
         
