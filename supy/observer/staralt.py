@@ -121,7 +121,14 @@ class StarAltitude:
             time = self.observer.now()
         
         # Get tonight's window to create a cache key
-        sunset, sunrise = self.observer.tonight(time)
+        # Handle nights where the sun doesn't set below the horizon
+        try:
+            sunset, sunrise = self.observer.tonight(time)
+        except ValueError:
+            reason = "Sun does not set below -18 degrees (no astronomical night)"
+            result = VisibilityResult("NOT_OBSERVABLE", None, None, reason, None)
+            data_dict = {'altitudes': np.array([]), 'moon_separations': np.array([])}
+            return result, data_dict
         twilight_times = self.observer.get_twilight_times(time)
         
         # Caching logic
@@ -252,12 +259,21 @@ class StarAltitude:
         """
         # No windows - not observable
         if not windows:
-            reason = self._determine_reason(
-                np.max(altitudes), 
-                np.min(moon_separations),
-                min_altitude, 
-                min_moon_separation
+            # Check if it would have been observable ignoring the sun
+            is_potentially_observable = (
+                (altitudes > min_altitude) &
+                (moon_separations > min_moon_separation)
             )
+            if np.any(is_potentially_observable):
+                reason = "Target is only observable during daylight/twilight"
+            else:
+                reason = self._determine_reason(
+                    np.max(altitudes) if altitudes.size > 0 else -90,
+                    np.min(moon_separations) if moon_separations.size > 0 else 180,
+                    min_altitude,
+                    min_moon_separation
+                )
+            
             return VisibilityResult(
                 status="NOT_OBSERVABLE",
                 when=None,
@@ -317,6 +333,8 @@ class StarAltitude:
         str
             Reason for non-observability
         """
+        if max_altitude == -90: # Handle empty altitude array case
+             return "Calculation error or no valid time range"
         if max_altitude <= 0:
             return "Target never rises above horizon"
         elif max_altitude < min_altitude and min_moon_separation < min_moon_separation_constraint:
@@ -327,6 +345,54 @@ class StarAltitude:
             return f"Moon too close (minimum separation {min_moon_separation:.1f}°)"
         else:
             return "Timing constraints not met"
+    
+    def find_next_observable_night(self,
+                                   ra: float,
+                                   dec: float,
+                                   time: Optional[Time] = None,
+                                   min_altitude: float = 30,
+                                   min_moon_separation: float = 30,
+                                   search_days: int = 7) -> Optional[Tuple[VisibilityResult, dict, int]]:
+        """
+        Find the next observable night within a given search window.
+
+        Parameters
+        ----------
+        ra : float
+            Right ascension in degrees
+        dec : float
+            Declination in degrees
+        time : Time, optional
+            Start time for the search (default: now)
+        min_altitude : float
+            Minimum altitude constraint
+        min_moon_separation : float
+            Minimum moon separation constraint
+        search_days : int
+            Number of days to search ahead
+
+        Returns
+        -------
+        tuple or None
+            (VisibilityResult, data_dict, days_from_now) if an opportunity is found,
+            otherwise None.
+        """
+        if time is None:
+            time = self.observer.now()
+
+        for days_ahead in range(1, search_days + 1):
+            future_time = time + days_ahead * u.day
+            
+            result, data = self.calculate_visibility(
+                ra, dec, time=future_time,
+                min_altitude=min_altitude,
+                min_moon_separation=min_moon_separation
+            )
+            
+            if result.is_observable:
+                return result, data, days_ahead
+        
+        return None
     
     def plot_visibility(self, data_dict: dict, result: VisibilityResult, 
                        target_name: str = "Target", show_current: bool = True) -> plt.Figure:
