@@ -6,7 +6,7 @@ from shapely.geometry import Point, Polygon
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.io import ascii
-from astropy.table import Table
+from astropy.table import Table, Column
 from datetime import datetime
 from astropy.table import vstack
 from typing import List, Union
@@ -141,20 +141,43 @@ class Tiles:
         unique_table = matched_tbl[sorted(unique_indices)]
         self._tile_table = unique_table
 
-        target_tbl = Table()
-        for i, (ra, dec) in enumerate(zip(list_ra, list_dec)):
-            target_tbl_single = Table()
-            target_tbl_single['ra'] = [ra]
-            target_tbl_single['dec'] = [dec]
+        # Build complete data first
+        ras = []
+        decs = []
+        hhmmss_list = []
+        ddmmss_list = []
+        j2000_list = []
+        apertures = []
+        matched_indices = []
+        matched_tiles_list = []
+
+        for coord_idx, matched_tiles in zip(list_matched_coords, list_matched_tiles):
+            ra = list_ra[coord_idx]
+            dec = list_dec[coord_idx]
+            ras.append(ra)
+            decs.append(dec)
+            
             hhmmss, ddmmss = parse_coordinates([ra,dec], output_format='hmsdms')
-            target_tbl_single['hhmmss'] = hhmmss
-            target_tbl_single['ddmmss'] = ddmmss
+            hhmmss_list.append(hhmmss)
+            ddmmss_list.append(ddmmss)
+            
             j2000 = parse_coordinates([ra,dec], output_format='j2000')
-            target_tbl_single['j2000'] = j2000
-            target_tbl_single['aperture'] = [list_aperture[i]]
-            target_tbl_single['matched_idx'] = [i]
-            target_tbl_single['matched_tile'] = list_matched_tiles[i]
-            target_tbl = vstack([target_tbl, target_tbl_single])
+            j2000_list.append(j2000)
+            
+            apertures.append(list_aperture[coord_idx])
+            matched_indices.append(coord_idx)
+            matched_tiles_list.append(matched_tiles)
+
+        # Create table once with all data
+        target_tbl = Table()
+        target_tbl['ra'] = ras
+        target_tbl['dec'] = decs
+        target_tbl['hhmmss'] = hhmmss_list
+        target_tbl['ddmmss'] = ddmmss_list
+        target_tbl['j2000'] = j2000_list
+        target_tbl['aperture'] = apertures
+        target_tbl['matched_idx'] = matched_indices
+        target_tbl['matched_tile'] = Column(matched_tiles_list, dtype=object)
 
         self._target_table = target_tbl
         
@@ -170,6 +193,7 @@ class Tiles:
     def visualize_tiles(self, 
                         visualize_ncols: int = 5, 
                         visualize_savepath: Union[str, bool] = False,
+                        show: bool = True,
                         **kwargs):
         """
         Visualize the tiles and matched coordinates with aperture regions.
@@ -178,6 +202,7 @@ class Tiles:
         Parameters:
         - visualize_ncols (int): Number of columns in the visualization grid
         - visualize_savepath (str or bool): Path to save the visualization or False to not save
+        - show (bool): Whether to show the plot or not
         
         Returns:
         - Path to the saved figure, or None if not saved
@@ -293,7 +318,10 @@ class Tiles:
             fig_path = f"{os.path.join(visualize_savepath, f'matched_tiles_{timestamp}')}.png"
             plt.savefig(fig_path)
         
-        plt.show()
+        if show:
+            plt.show()
+        else:
+            plt.close()
         return fig_path
 
     def _find_innermost_tile(self, polygons_by_id, target_point):
@@ -321,6 +349,10 @@ class Tiles:
 
         for tile_id, polygons in polygons_by_id.items():
             for poly in polygons:
+                # Skip degenerate polygons with zero or near-zero area
+                if poly.area < 1e-10:
+                    continue
+                    
                 if target_circle.intersects(poly):
                     intersection = target_circle.intersection(poly)
                     fraction_overlap = intersection.area / poly.area
