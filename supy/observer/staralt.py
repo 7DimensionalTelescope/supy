@@ -20,6 +20,7 @@ from .observer import Observer
 @dataclass
 class VisibilityWindow:
     """Data class for an observable window."""
+    from_time: Time
     start_time: Time
     end_time: Time
     max_altitude: float
@@ -157,7 +158,7 @@ class StarAltitude:
         )
         
         # Find continuous observable windows
-        windows = self._find_windows(is_observable, time_grid, altitudes, moon_separations)
+        windows = self._find_windows(is_observable, time_grid, altitudes, moon_separations, time)
         
         # Determine visibility status
         result = self._analyze_windows(windows, time, altitudes, moon_separations, 
@@ -187,10 +188,11 @@ class StarAltitude:
         return result, data_dict
     
     def _find_windows(self, is_observable: np.ndarray, time_grid: np.ndarray,
-                     altitudes: np.ndarray, moon_separations: np.ndarray) -> List[VisibilityWindow]:
+                     altitudes: np.ndarray, moon_separations: np.ndarray,
+                     from_time: Time) -> List[VisibilityWindow]:
         """
         Find continuous observable windows.
-        
+
         Parameters
         ----------
         is_observable : np.ndarray
@@ -201,7 +203,9 @@ class StarAltitude:
             Target altitudes
         moon_separations : np.ndarray
             Moon separations
-        
+        from_time : Time
+            Reference time for the calculation
+
         Returns
         -------
         list
@@ -220,8 +224,9 @@ class StarAltitude:
             window_mask = slice(start_idx, end_idx + 1)
             window_alts = altitudes[window_mask]
             window_moonseps = moon_separations[window_mask]
-            
+
             window = VisibilityWindow(
+                from_time=from_time,
                 start_time=time_grid[start_idx],
                 end_time=time_grid[end_idx],
                 max_altitude=np.max(window_alts),
@@ -490,7 +495,17 @@ class StarAltitude:
         # Formatting
         ax.set_xlabel('Time (UTC)')
         ax.set_ylabel('Altitude (degrees)')
-        ax.set_title(f'{target_name} Visibility - {result.status}')
+
+        # Create detailed title based on visibility status
+        if result.is_observable_now:
+            title = f'{target_name} / Visibility - Observable Now'
+        elif result.when == "later" and result.window:
+            wait_time = result.window.time_until_start(current_time)
+            title = f'{target_name} / Visibility - Observable in {wait_time:.1f}h'
+        else:
+            title = f'{target_name} / Visibility - {result.status}'
+
+        ax.set_title(title)
         ax.set_ylim(0, 90)
         ax.grid(True, alpha=0.3)
         ax.legend(loc='upper right', fontsize=8)
@@ -502,7 +517,7 @@ class StarAltitude:
         
         # Add visibility info text
         if result.is_observable:
-            info_text = self._format_info_text(result)
+            info_text = self._format_info_text(result, current_time)
             ax.text(0.02, 0.98, info_text, transform=ax.transAxes,
                    fontsize=9, verticalalignment='top',
                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
@@ -510,17 +525,17 @@ class StarAltitude:
         plt.tight_layout()
         return fig
     
-    def _format_info_text(self, result: VisibilityResult) -> str:
+    def _format_info_text(self, result: VisibilityResult, current_time: Time) -> str:
         """Format information text for plot."""
         lines = []
         
         if result.when == "now":
-            remaining = result.window.time_remaining(Time.now())
+            remaining = result.window.time_remaining(current_time)
             lines.append(f"Currently Observable")
             lines.append(f"Remaining: {remaining:.1f} hours")
             lines.append(f"Until: {result.window.end_time.datetime.strftime('%H:%M UTC')}")
         elif result.when == "later":
-            wait_time = result.window.time_until_start(Time.now())
+            wait_time = result.window.time_until_start(current_time)
             lines.append(f"Observable in {wait_time:.1f} hours")
             lines.append(f"Duration: {result.window.duration_hours:.1f} hours")
             lines.append(f"Window: {result.window.start_time.datetime.strftime('%H:%M')}-"
