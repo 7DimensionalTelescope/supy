@@ -478,7 +478,7 @@ class StarAltitude:
                   alpha=0.7, label=f'Min altitude ({min_altitude}°)')
         
         # Current time marker
-        if show_current and result.is_observable_now:
+        if show_current and (result.is_observable_now or result.when == "later"):
             ax.axvline(x=current_time.plot_date, color='purple', 
                       linestyle='-', linewidth=2, label='Now')
         
