@@ -194,6 +194,7 @@ class Tiles:
                         visualize_ncols: int = 5, 
                         visualize_savepath: Union[str, bool] = False,
                         show: bool = True,
+                        title: str = None,
                         **kwargs):
         """
         Visualize the tiles and matched coordinates with aperture regions.
@@ -203,6 +204,7 @@ class Tiles:
         - visualize_ncols (int): Number of columns in the visualization grid
         - visualize_savepath (str or bool): Path to save the visualization or False to not save
         - show (bool): Whether to show the plot or not
+        - title (str): Set the title of the plot
         
         Returns:
         - Path to the saved figure, or None if not saved
@@ -218,7 +220,7 @@ class Tiles:
         cols = visualize_ncols
         rows = (n_coords + cols - 1) // cols
 
-        fig, axes = plt.subplots(rows, cols, figsize=(15, rows * 3), subplot_kw={'aspect': 'equal'})
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3), subplot_kw={'aspect': 'equal'})
         if rows == 1 and cols == 1:
             axes = [axes]
         elif isinstance(axes, np.ndarray):
@@ -254,7 +256,10 @@ class Tiles:
                 ax.set_ylim(dec - 2, dec + 2)
                 if j2000:
                     unmatched_j2000.append(j2000_string)
-                ax.set_title(f'Target {i + 1}: ({ra:.2f}, {dec:.2f})\n{j2000_string}')
+                if title is not None:
+                    ax.set_title(title)
+                else:
+                    ax.set_title(f'Target {i + 1}: ({ra:.2f}, {dec:.2f})\n{j2000_string}')
                 continue
             
             nearby_tiles_idx = coord_targets.separation(self.coords_RIS) < (aperture + 3) * u.deg
@@ -278,7 +283,7 @@ class Tiles:
             if aperture > 0:
                 aperture_circle = plt.Circle((ra, dec), aperture, color='red', fill=True, linestyle='--', label='Aperture', lw=3, alpha=0.2)
                 ax.add_patch(aperture_circle)
-                ax.text(ra, dec, f'N_tiles ={len(matched_tile_ids)}', fontsize=8, ha='center', va='center', color='black',
+                ax.text(ra, dec, f'N_tiles ={len(matched_tile_ids)}', fontsize=12, ha='center', va='center', color='black', fontweight='bold',
                         bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
                 ax.set_xlim(ra - 1.2 * aperture, ra + 1.2 * aperture)
                 ax.set_ylim(dec - 1.2 * aperture, dec + 1.2 * aperture)
@@ -292,9 +297,12 @@ class Tiles:
                         innermost_poly = nearby_polygons_by_id[first_tile_id][0]
                         x, y = innermost_poly.exterior.xy
                         ax.plot(x, y, color='red', lw=2)
-                        ax.text(ra, dec - 0.3, first_tile_id, fontsize=8, ha='center', va='center', color='black',
+                        ax.text(ra, dec - 0.3, first_tile_id, fontsize=12, ha='center', va='center', color='black', fontweight='bold',
                                 bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
-            ax.set_title(f'Target {i + 1}: ({ra:.2f}, {dec:.2f})\n{j2000_string}')
+            if title is not None:
+                ax.set_title(title)
+            else:
+                ax.set_title(f'Target {i + 1}: ({ra:.2f}, {dec:.2f})\n{j2000_string}')
 
         # Add a legend to the first subplot
         if n_coords > 0:
@@ -316,7 +324,7 @@ class Tiles:
             os.makedirs(visualize_savepath, exist_ok=True)
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             fig_path = f"{os.path.join(visualize_savepath, f'matched_tiles_{timestamp}')}.png"
-            plt.savefig(fig_path)
+            plt.savefig(fig_path, bbox_inches='tight')
         
         if show:
             plt.show()

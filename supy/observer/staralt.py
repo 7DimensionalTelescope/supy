@@ -431,70 +431,64 @@ class StarAltitude:
         
         # Create figure
         fig, ax = plt.subplots(figsize=(12, 6), dpi=100)
-        
-        # Plot altitude curves
-        ax.scatter(time_plot[is_observable], altitudes[is_observable], 
-                  c='green', s=20, alpha=0.6, label='Observable')
-        ax.scatter(time_plot[~is_observable], altitudes[~is_observable], 
-                  c='red', s=20, alpha=0.3, label='Not observable')
-        
-        # Moon altitude
-        ax.plot(time_plot, moon_altitudes, 'b-', alpha=0.5, linewidth=1, label='Moon')
-        
-        # Different twilight shadings (if available)
+
+        # Night shading layers (grey tones, darkest at astronomical night)
         if twilight_times:
-            # Civil twilight (lightest)
             if 'sunset_civil' in twilight_times and 'sunrise_civil' in twilight_times:
                 civil_mask = (time_grid >= twilight_times['sunset_civil']) & \
                            (time_grid <= twilight_times['sunrise_civil'])
                 if np.any(civil_mask):
-                    ax.fill_between(time_plot, 0, 90, where=civil_mask, 
-                                  alpha=0.05, color='blue', label='Civil twilight')
-            
-            # Nautical twilight
+                    ax.fill_between(time_plot, 0, 90, where=civil_mask,
+                                  alpha=0.10, color='grey', label='Civil twilight')
+
             if 'sunset_nautical' in twilight_times and 'sunrise_nautical' in twilight_times:
                 nautical_mask = (time_grid >= twilight_times['sunset_nautical']) & \
                               (time_grid <= twilight_times['sunrise_nautical'])
                 if np.any(nautical_mask):
-                    ax.fill_between(time_plot, 0, 90, where=nautical_mask, 
-                                  alpha=0.1, color='blue')
-            
-            # Astronomical twilight
+                    ax.fill_between(time_plot, 0, 90, where=nautical_mask,
+                                  alpha=0.12, color='grey')
+
             if 'sunset_astro' in twilight_times and 'sunrise_astro' in twilight_times:
                 astro_mask = (time_grid >= twilight_times['sunset_astro']) & \
                             (time_grid <= twilight_times['sunrise_astro'])
                 if np.any(astro_mask):
-                    ax.fill_between(time_plot, 0, 90, where=astro_mask, 
-                                  alpha=0.15, color='navy')
-        
-        # Astronomical night (darkest)
+                    ax.fill_between(time_plot, 0, 90, where=astro_mask,
+                                  alpha=0.15, color='grey')
+
         night_mask = (time_grid >= sunset) & (time_grid <= sunrise)
         if np.any(night_mask):
-            ax.fill_between(time_plot, 0, 90, where=night_mask, 
-                          alpha=0.2, color='navy', label='Astronomical night')
-        
+            ax.fill_between(time_plot, 0, 90, where=night_mask,
+                          alpha=0.25, color='grey', label='Night')
+
+        # Moon altitude (blue)
+        ax.plot(time_plot, moon_altitudes, color='steelblue', alpha=0.7,
+                linewidth=1.5, linestyle='--', label='Moon')
+
+        # Target altitude curve (red)
+        ax.plot(time_plot, altitudes, color='red', linewidth=2, alpha=0.85, label='Target')
+
+        # Observable points on top (large green dots)
+        ax.scatter(time_plot[is_observable], altitudes[is_observable],
+                  c='green', s=60, alpha=0.8, zorder=5, label='Observed')
+
         # Minimum altitude line
-        ax.axhline(y=min_altitude, color='orange', linestyle='--', 
+        ax.axhline(y=min_altitude, color='orange', linestyle='--',
                   alpha=0.7, label=f'Min altitude ({min_altitude}°)')
-        
+
         # Current time marker
         if show_current and result.is_observable_now:
-            ax.axvline(x=current_time.plot_date, color='purple', 
+            ax.axvline(x=current_time.plot_date, color='purple',
                       linestyle='-', linewidth=2, label='Now')
-        
-        # Observable windows
-        for window in data_dict.get('windows', []):
-            ax.axvspan(window.start_time.plot_date, window.end_time.plot_date,
-                      alpha=0.2, color='green')
-        
+
         # Formatting
         ax.set_xlabel('Time (UTC)')
         ax.set_ylabel('Altitude (degrees)')
         ax.set_title(f'{target_name} Visibility - {result.status}')
         ax.set_ylim(0, 90)
+        ax.set_xlim(time_plot[0], time_plot[-1])
         ax.grid(True, alpha=0.3)
         ax.legend(loc='upper right', fontsize=8)
-        
+
         # Format x-axis
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
         ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
